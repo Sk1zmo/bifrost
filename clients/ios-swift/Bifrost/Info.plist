@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Bifrost</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.bifrost.ios</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+
+    <!-- Required from iOS 14: without it the system silently drops every
+         broadcast and multicast datagram, and discovery finds nothing. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Bifrost finds the other devices on your Wi-Fi so they can chat, share files and call each other. Nothing leaves your local network.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_bifrost._udp</string>
+        <string>_bifrost._tcp</string>
+    </array>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Bifrost uses the microphone for voice calls to other devices on your network.</string>
+
+    <!-- Keep beaconing briefly in the background so a phone does not vanish
+         from every peer the moment the screen locks. -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>voip</string>
+    </array>
+</dict>
+</plist>

@@ -1,0 +1,17 @@
+# Normalise to LF in the repository; check out native on Windows.
+* text=auto
+
+# These MUST stay LF wherever they are checked out. A shell script with CRLF
+# line endings fails on Linux with "bad interpreter: /usr/bin/env sh^M", which
+# would break the one-line installer for exactly the users it is aimed at.
+*.sh        text eol=lf
+Makefile    text eol=lf
+Dockerfile  text eol=lf
+
+# PowerShell is fine either way, but keep it CRLF to match Windows tooling.
+*.ps1       text eol=crlf
+
+# Never touched.
+*.png binary
+*.jpg binary
+*.ico binary

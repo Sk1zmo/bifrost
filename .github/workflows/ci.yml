@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: Format and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The integration tests bind real sockets and exchange real beacons, so
+      # they exercise each runner's actual network stack rather than a mock.
+      - name: Run tests
+        run: cargo test --workspace
+
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  name: linux-x86_64 }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-gnu, name: linux-arm64  }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,    name: windows-x86_64 }
+          - { os: macos-latest,   target: aarch64-apple-darwin,      name: macos-arm64 }
+          - { os: macos-latest,   target: x86_64-apple-darwin,       name: macos-x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install the cross linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - run: cargo build --release -p bifrost-cli --target ${{ matrix.target }}
+
+      - name: Stage the artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/bifrost.exe" "dist/bifrost-${{ matrix.name }}.exe"
+          else
+            cp "target/${{ matrix.target }}/release/bifrost" "dist/bifrost-${{ matrix.name }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bifrost-${{ matrix.name }}
+          path: dist/*
+
+  mobile-core:
+    name: Cross-compile the core for ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-linux-android,   name: android-arm64 }
+          - { target: armv7-linux-androideabi, name: android-arm32 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      # Proves the core still builds for mobile; the app shells need Flutter
+      # and Xcode and are built separately.
+      - name: Build the shared library
+        run: |
+          cargo install cargo-ndk --locked
+          cargo ndk --target ${{ matrix.target }} --platform 24 -- build --release -p bifrost-core
+
+  release:
+    name: Release
+    needs: [check, test, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

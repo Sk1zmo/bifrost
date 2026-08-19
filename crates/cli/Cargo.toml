@@ -1,0 +1,29 @@
+[package]
+name = "bifrost-cli"
+description = "The Bifrost command line application and terminal dashboard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "bifrost"
+path = "src/main.rs"
+
+[dependencies]
+bifrost-core = { path = "../core" }
+bifrost-web = { path = "../web" }
+anyhow.workspace = true
+chrono.workspace = true
+clap = { version = "4", features = ["derive", "wrap_help"] }
+crossterm = "0.27"
+dirs.workspace = true
+socket2.workspace = true
+qrcode = { version = "0.14", default-features = false }
+ratatui = "0.26"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true

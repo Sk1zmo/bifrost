@@ -1,0 +1,24 @@
+services:
+  bifrost:
+    build: .
+    image: bifrost:latest
+    container_name: bifrost
+
+    # Required. Bifrost finds peers by broadcasting on the LAN, and the
+    # default bridge network has no path to the real one.
+    network_mode: host
+
+    restart: unless-stopped
+
+    environment:
+      BIFROST_LOG: info
+
+    volumes:
+      # Keeps this node's identity across restarts, so peers' aliases for it
+      # survive rather than it reappearing as a stranger.
+      - bifrost-data:/home/bifrost/.bifrost
+      # Received files land here.
+      - ./downloads:/home/bifrost/Downloads/Bifrost
+
+volumes:
+  bifrost-data:

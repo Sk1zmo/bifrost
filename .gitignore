@@ -1,0 +1,19 @@
+/target
+**/target
+Cargo.lock.bak
+*.pdb
+dist/
+artifacts/
+downloads/
+.bifrost/
+
+# Flutter
+clients/flutter/.dart_tool/
+clients/flutter/build/
+clients/flutter/.flutter-plugins*
+clients/flutter/android/app/src/main/jniLibs/
+clients/flutter/ios/Runner/libbifrost_core.a
+
+# Xcode
+clients/ios-swift/**/xcuserdata/
+clients/ios-swift/**/*.a

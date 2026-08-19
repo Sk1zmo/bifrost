@@ -1,0 +1,1410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Bifrost">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>Bifrost</title>
+<style>
+/* ═══ Design tokens ═══════════════════════════════════════════════════════
+   Palette from the validated reference instance. The two series hues
+   (blue / orange) pass every categorical check all-pairs in both modes.
+   Status hues are fixed and never carry meaning alone — every one of them
+   ships beside an icon and a text label.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  color-scheme: light;
+  --surface-1:   #fcfcfb;   /* cards */
+  --surface-2:   #f9f9f7;   /* page */
+  --surface-3:   #f2f2ee;   /* wells, inputs */
+  --text-1:      #0b0b0b;
+  --text-2:      #52514e;
+  --text-3:      #898781;
+  --grid:        #e1e0d9;
+  --axis:        #c3c2b7;
+  --border:      rgba(11, 11, 11, .10);
+  --border-firm: rgba(11, 11, 11, .18);
+
+  --series-1:    #2a78d6;   /* received */
+  --series-2:    #eb6834;   /* transmitted */
+  --seq-100:     #cde2fb;   /* meter tracks */
+  --seq-250:     #86b6ef;
+
+  --good:        #0ca30c;
+  --warning:     #fab219;
+  --serious:     #ec835a;
+  --critical:    #d03b3b;
+  --good-text:   #006300;
+
+  --shadow: 0 1px 2px rgba(11,11,11,.04), 0 4px 12px rgba(11,11,11,.05);
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-1:   #1a1a19;
+    --surface-2:   #0d0d0d;
+    --surface-3:   #232322;
+    --text-1:      #ffffff;
+    --text-2:      #c3c2b7;
+    --text-3:      #898781;
+    --grid:        #2c2c2a;
+    --axis:        #383835;
+    --border:      rgba(255,255,255,.10);
+    --border-firm: rgba(255,255,255,.18);
+    --series-1:    #3987e5;
+    --series-2:    #d95926;
+    --seq-100:     #184f95;
+    --seq-250:     #256abf;
+    --good-text:   #0ca30c;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1:   #1a1a19;
+  --surface-2:   #0d0d0d;
+  --surface-3:   #232322;
+  --text-1:      #ffffff;
+  --text-2:      #c3c2b7;
+  --text-3:      #898781;
+  --grid:        #2c2c2a;
+  --axis:        #383835;
+  --border:      rgba(255,255,255,.10);
+  --border-firm: rgba(255,255,255,.18);
+  --series-1:    #3987e5;
+  --series-2:    #d95926;
+  --seq-100:     #184f95;
+  --seq-250:     #256abf;
+  --good-text:   #0ca30c;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.25);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--surface-2);
+  color: var(--text-1);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow-x: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--series-1); }
+
+/* ═══ Layout ═══ */
+.shell { max-width: 1400px; margin: 0 auto; padding: 0 16px 48px; }
+
+header.top {
+  position: sticky; top: 0; z-index: 30;
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding-top: env(safe-area-inset-top);
+}
+.top-row {
+  max-width: 1400px; margin: 0 auto; padding: 12px 16px;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: 10px; margin-right: auto; min-width: 0; }
+.brand-mark {
+  width: 32px; height: 32px; flex: none; border-radius: 9px;
+  background: linear-gradient(140deg, var(--series-1), var(--series-2));
+  display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 15px;
+}
+.brand-text { min-width: 0; }
+.brand-text h1 { font-size: 17px; line-height: 1.15; }
+.brand-sub {
+  font-size: 12.5px; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.conn { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-2); }
+.conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+.conn.offline .dot { background: var(--critical); }
+
+.icon-btn {
+  width: 36px; height: 36px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-1); cursor: pointer; color: var(--text-2);
+}
+.icon-btn:hover { border-color: var(--border-firm); color: var(--text-1); }
+
+/* Tabs */
+nav.tabs {
+  display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+  max-width: 1400px; margin: 0 auto; padding: 0 12px;
+}
+nav.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  flex: none; padding: 10px 14px; border: 0; background: none; cursor: pointer;
+  color: var(--text-2); font-size: 14px; font-weight: 500;
+  border-bottom: 2px solid transparent; white-space: nowrap;
+}
+.tab[aria-selected="true"] { color: var(--text-1); border-bottom-color: var(--series-1); }
+.tab .badge {
+  display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px;
+  border-radius: 9px; background: var(--surface-3); color: var(--text-2);
+  font-size: 11.5px; font-weight: 600; text-align: center;
+}
+
+.panel { display: none; padding-top: 20px; }
+.panel.active { display: block; }
+
+/* ═══ Cards ═══ */
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px;
+}
+.card + .card { margin-top: 16px; }
+.card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+.card-head h2 { font-size: 14px; }
+.card-head .note { font-size: 12.5px; color: var(--text-3); margin-left: auto; }
+
+.grid { display: grid; gap: 16px; }
+@media (min-width: 900px) { .grid.cols-2 { grid-template-columns: 1fr 1fr; } }
+
+/* ═══ Hero + stat tiles ═══ */
+.hero { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; margin-bottom: 6px; }
+.hero-figure { font-size: 52px; font-weight: 600; line-height: 1; letter-spacing: -.03em; }
+.hero-label { font-size: 14px; color: var(--text-2); padding-bottom: 6px; }
+
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.tile {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.tile .label { font-size: 12.5px; color: var(--text-2); }
+.tile .value { font-size: 25px; font-weight: 600; line-height: 1.2; margin-top: 3px; }
+.tile .sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+
+/* ═══ Meters ═══
+   Fill carries severity; the track is a lighter step of the same ramp so
+   state reads across the whole bar. The numeric value always sits beside
+   it, so the colour is never the only cue. */
+.meter-row { display: flex; align-items: center; gap: 12px; }
+.meter-row + .meter-row { margin-top: 14px; }
+.meter-name { width: 46px; flex: none; font-size: 12.5px; color: var(--text-2); }
+.meter {
+  flex: 1; height: 10px; border-radius: 5px;
+  background: var(--seq-100); overflow: hidden; min-width: 60px;
+}
+.meter > span {
+  display: block; height: 100%; border-radius: 5px;
+  background: var(--series-1); transition: width .45s ease, background-color .3s ease;
+}
+.meter.warn > span { background: var(--warning); }
+.meter.crit > span { background: var(--critical); }
+.meter-value {
+  width: 108px; flex: none; text-align: right;
+  font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums;
+}
+
+/* ═══ Chart ═══ */
+.chart-wrap { position: relative; }
+.chart-wrap svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+.legend { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--text-2); }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 14px; height: 2px; border-radius: 1px; flex: none; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0; transition: opacity .12s;
+  background: var(--surface-1); border: 1px solid var(--border-firm);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow);
+  padding: 8px 10px; font-size: 12.5px; white-space: nowrap; z-index: 10;
+}
+.tooltip .t-title { color: var(--text-3); margin-bottom: 4px; }
+.tooltip .t-row { display: flex; align-items: center; gap: 7px; }
+.tooltip .t-row + .t-row { margin-top: 2px; }
+.tooltip .t-val { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-1); }
+
+/* ═══ Peers ═══ */
+.peer-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
+.peer {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.peer.offline { opacity: .58; }
+.peer-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.peer-icon {
+  width: 34px; height: 34px; flex: none; border-radius: 9px;
+  background: var(--surface-3); display: grid; place-items: center; color: var(--text-2);
+}
+.peer-id { min-width: 0; flex: 1; }
+.peer-name {
+  font-weight: 600; font-size: 14.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.peer-meta { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.status {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 20px;
+  background: var(--surface-3); color: var(--text-2);
+}
+.status .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.status.on .dot { background: var(--good); }
+.status.off .dot { background: var(--text-3); }
+.peer-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+
+/* ═══ Buttons & inputs ═══ */
+.btn {
+  padding: 7px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface-1);
+  color: var(--text-1); font-size: 13px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn:hover { border-color: var(--border-firm); background: var(--surface-3); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); background: var(--series-1); }
+.btn.danger { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, transparent); }
+.btn.small { padding: 5px 9px; font-size: 12px; }
+
+.field {
+  width: 100%; padding: 9px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface-3); color: var(--text-1);
+}
+.field:focus { outline: 2px solid var(--series-1); outline-offset: -1px; }
+select.field { appearance: auto; }
+label.lab { display: block; font-size: 12.5px; color: var(--text-2); margin-bottom: 5px; }
+
+/* ═══ Chat ═══ */
+.chat-log {
+  height: min(52vh, 460px); overflow-y: auto; padding-right: 4px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.msg { display: flex; flex-direction: column; max-width: min(78%, 560px); }
+.msg.mine { align-self: flex-end; align-items: flex-end; }
+.msg-meta { font-size: 11.5px; color: var(--text-3); margin-bottom: 3px; padding: 0 2px; }
+.msg-body {
+  padding: 8px 12px; border-radius: 14px; background: var(--surface-3);
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.msg.mine .msg-body { background: var(--series-1); color: #fff; }
+.msg.dm .msg-body { border: 1px dashed var(--border-firm); }
+.composer { display: flex; gap: 8px; margin-top: 14px; }
+
+/* ═══ Files ═══ */
+.dropzone {
+  border: 2px dashed var(--axis); border-radius: var(--radius);
+  padding: 28px 18px; text-align: center; color: var(--text-2);
+  background: var(--surface-3); cursor: pointer;
+}
+.dropzone.over { border-color: var(--series-1); color: var(--series-1); }
+
+.rows { display: flex; flex-direction: column; }
+.row {
+  display: flex; align-items: center; gap: 12px; padding: 11px 0;
+  border-top: 1px solid var(--border);
+}
+.rows .row:first-child { border-top: 0; }
+.row-main { flex: 1; min-width: 0; }
+.row-title { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-sub { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* ═══ Log ═══ */
+.log { max-height: 220px; overflow-y: auto; font-size: 12.5px; }
+.log-line { display: flex; gap: 8px; padding: 3px 0; align-items: baseline; }
+.log-time { color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
+.log-text { overflow-wrap: anywhere; }
+.log-line.success .log-text { color: var(--good-text); }
+.log-line.warning .log-text { color: var(--text-1); }
+.log-line.error   .log-text { color: var(--critical); }
+
+/* ═══ Table view (the accessible alternative to every chart) ═══ */
+table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.data th, table.data td {
+  text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { color: var(--text-2); font-weight: 600; }
+.table-scroll { overflow-x: auto; max-height: 240px; }
+
+.empty { padding: 26px 10px; text-align: center; color: var(--text-3); font-size: 13.5px; }
+.hidden { display: none !important; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
+  transform: translateX(-50%) translateY(140%);
+  background: var(--text-1); color: var(--surface-1);
+  padding: 10px 16px; border-radius: 22px; font-size: 13.5px;
+  box-shadow: var(--shadow); transition: transform .28s cubic-bezier(.2,.8,.2,1);
+  z-index: 100; max-width: calc(100vw - 32px);
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+</style>
+</head>
+<body>
+
+<!-- Device icons, referenced by <use>. -->
+<svg class="hidden" aria-hidden="true">
+  <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+  <symbol id="i-tablet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="2" width="16" height="20" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/>
+    <path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+  <symbol id="i-mac" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></symbol>
+  <symbol id="i-windows" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="i-linux" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8M12 17v4M9 9.5h.01M15 9.5h.01"/></symbol>
+  <symbol id="i-device" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="5" width="18" height="14" rx="2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+    <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+</svg>
+
+<header class="top">
+  <div class="top-row">
+    <div class="brand">
+      <div class="brand-mark">B</div>
+      <div class="brand-text">
+        <h1>Bifrost</h1>
+        <div class="brand-sub" id="identity">connecting…</div>
+      </div>
+    </div>
+    <div class="conn" id="conn"><span class="dot"></span><span id="conn-text">Live</span></div>
+    <button class="icon-btn" id="theme-toggle" title="Switch theme" aria-label="Switch theme">
+      <svg width="17" height="17" aria-hidden="true"><use href="#i-moon" id="theme-icon"/></svg>
+    </button>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-panel="overview" aria-selected="true">Overview</button>
+    <button class="tab" role="tab" data-panel="peers" aria-selected="false">Devices<span class="badge" id="badge-peers">0</span></button>
+    <button class="tab" role="tab" data-panel="chat" aria-selected="false">Chat</button>
+    <button class="tab" role="tab" data-panel="files" aria-selected="false">Files<span class="badge" id="badge-files">0</span></button>
+    <button class="tab" role="tab" data-panel="calls" aria-selected="false">Calls</button>
+    <button class="tab" role="tab" data-panel="settings" aria-selected="false">Settings</button>
+  </nav>
+</header>
+
+<div class="shell">
+
+  <!-- ══ Overview ══ -->
+  <section class="panel active" id="panel-overview" role="tabpanel">
+    <div class="hero">
+      <div class="hero-figure" id="hero-value">—</div>
+      <div class="hero-label" id="hero-label">devices on this network</div>
+    </div>
+
+    <div class="tiles" style="margin-top:16px">
+      <div class="tile">
+        <div class="label">CPU cores</div>
+        <div class="value" id="pool-cores">—</div>
+        <div class="sub">across the network</div>
+      </div>
+      <div class="tile">
+        <div class="label">Memory free</div>
+        <div class="value" id="pool-ram">—</div>
+        <div class="sub" id="pool-ram-sub">of — total</div>
+      </div>
+      <div class="tile">
+        <div class="label">Disk free</div>
+        <div class="value" id="pool-disk">—</div>
+        <div class="sub" id="pool-disk-sub">of — total</div>
+      </div>
+      <div class="tile">
+        <div class="label">Shared</div>
+        <div class="value" id="pool-shared">—</div>
+        <div class="sub" id="pool-shared-sub">nodes offering resources</div>
+      </div>
+    </div>
+
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="card">
+        <div class="card-head">
+          <h2>This device</h2>
+          <span class="note" id="this-host">—</span>
+        </div>
+        <div id="self-meters"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Network throughput</h2>
+          <button class="btn small" id="net-table-toggle" style="margin-left:auto">Table</button>
+        </div>
+        <div class="legend" style="margin-bottom:10px">
+          <span class="key"><span class="swatch" style="background:var(--series-1)"></span>Received</span>
+          <span class="key"><span class="swatch" style="background:var(--series-2)"></span>Sent</span>
+          <span style="margin-left:auto;color:var(--text-3)">last 2 minutes</span>
+        </div>
+        <div class="chart-wrap" id="net-chart-wrap">
+          <svg id="net-chart" viewBox="0 0 640 200" preserveAspectRatio="none"
+               role="img" aria-label="Network throughput over the last two minutes"></svg>
+          <div class="tooltip" id="net-tooltip"></div>
+        </div>
+        <div class="table-scroll hidden" id="net-table-wrap">
+          <table class="data">
+            <caption class="sr-only">Network throughput samples</caption>
+            <thead><tr><th scope="col">Time</th><th scope="col">Received (KB/s)</th><th scope="col">Sent (KB/s)</th></tr></thead>
+            <tbody id="net-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><h2>Activity</h2></div>
+      <div class="log" id="log"><div class="empty">Nothing yet.</div></div>
+    </div>
+  </section>
+
+  <!-- ══ Devices ══ -->
+  <section class="panel" id="panel-peers" role="tabpanel">
+    <div class="card">
+      <div class="card-head">
+        <h2>Devices on this network</h2>
+        <span class="note" id="peers-note">—</span>
+      </div>
+      <div class="peer-grid" id="peer-grid"></div>
+    </div>
+  </section>
+
+  <!-- ══ Chat ══ -->
+  <section class="panel" id="panel-chat" role="tabpanel">
+    <div class="card">
+      <div class="card-head">
+        <h2>Chat</h2>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <label class="lab" for="chat-target" style="margin:0">Send to</label>
+          <select class="field" id="chat-target" style="width:auto;min-width:150px">
+            <option value="">Everyone</option>
+          </select>
+        </div>
+      </div>
+      <div class="chat-log" id="chat-log"></div>
+      <form class="composer" id="chat-form">
+        <input class="field" id="chat-input" autocomplete="off"
+               placeholder="Type a message, or /help for commands" aria-label="Message">
+        <button class="btn primary" type="submit">Send</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ══ Files ══ -->
+  <section class="panel" id="panel-files" role="tabpanel">
+    <div class="card">
+      <div class="card-head"><h2>Send a file</h2></div>
+      <label class="lab" for="file-target">To</label>
+      <select class="field" id="file-target" style="margin-bottom:12px"></select>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button">
+        <strong>Drop a file here</strong><br>or tap to choose one
+      </div>
+      <input type="file" id="file-input" class="hidden" multiple>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Transfers</h2></div>
+      <div class="rows" id="transfers"><div class="empty">No transfers yet.</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Received files</h2>
+        <span class="note" id="download-dir">—</span>
+      </div>
+      <div class="rows" id="downloads"><div class="empty">Nothing received yet.</div></div>
+    </div>
+  </section>
+
+  <!-- ══ Calls ══ -->
+  <section class="panel" id="panel-calls" role="tabpanel">
+    <div class="card">
+      <div class="card-head"><h2>Voice</h2></div>
+      <p style="margin:0 0 14px;color:var(--text-2);font-size:13.5px">
+        Calls run entirely over the LAN. Hold <strong>Talk</strong> to transmit;
+        audio from the other device plays automatically.
+      </p>
+      <label class="lab" for="call-target">Call</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select class="field" id="call-target" style="flex:1;min-width:180px"></select>
+        <button class="btn primary" id="call-start">Start call</button>
+      </div>
+      <div class="rows" id="calls" style="margin-top:14px"><div class="empty">No calls.</div></div>
+    </div>
+  </section>
+
+  <!-- ══ Settings ══ -->
+  <section class="panel" id="panel-settings" role="tabpanel">
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="card-head"><h2>This node</h2></div>
+        <label class="lab" for="set-name">Display name</label>
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+          <input class="field" id="set-name" autocomplete="off">
+          <button class="btn" id="set-name-save">Save</button>
+        </div>
+
+        <label class="lab">Resource sharing</label>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <button class="btn" id="sharing-toggle">—</button>
+          <span style="font-size:12.5px;color:var(--text-3)" id="sharing-detail">—</span>
+        </div>
+        <p style="margin:0;font-size:12.5px;color:var(--text-3)">
+          Advertises a share of this device's spare capacity to the network.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Connection</h2></div>
+        <div class="rows" id="conn-info"></div>
+        <p style="margin:14px 0 0;font-size:12.5px;color:var(--text-3)">
+          Open the dashboard address on any phone or laptop on this Wi-Fi to
+          control this node — no app required.
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Commands</h2></div>
+      <p style="margin:0 0 12px;font-size:13px;color:var(--text-2)">
+        Anything typed in the chat box starting with <code>/</code> runs as a command,
+        identical to the terminal dashboard.
+      </p>
+      <div class="table-scroll">
+        <table class="data">
+          <thead><tr><th scope="col">Command</th><th scope="col">Does</th></tr></thead>
+          <tbody id="help-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+/* ═══ State ═══════════════════════════════════════════════════════════════ */
+const state = {
+  snapshot: null,
+  log: [],
+  net: [],            // { t, rx, tx } — rolling window for the throughput chart
+  activeCall: null,
+  connected: false,
+};
+
+const NET_POINTS = 60;          // 60 samples × 2 s = 2 minutes
+const $ = (id) => document.getElementById(id);
+
+/* ═══ Formatting ══════════════════════════════════════════════════════════ */
+const fmtCount = (n) => n.toLocaleString();
+
+function fmtBytes(bytes) {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, i);
+  return `${value >= 100 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
+}
+
+function fmtGB(gb) {
+  if (gb >= 1024) return `${(gb / 1024).toFixed(1)} TB`;
+  if (gb >= 10) return `${Math.round(gb)} GB`;
+  return `${gb.toFixed(1)} GB`;
+}
+
+function fmtMBasGB(mb) { return fmtGB(mb / 1024); }
+
+function fmtDuration(secs) {
+  if (secs < 60) return `${Math.round(secs)}s`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s`;
+  const h = Math.floor(secs / 3600);
+  return `${h}h ${Math.floor((secs % 3600) / 60)}m`;
+}
+
+function fmtTime(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* Severity for a percentage. Always paired with the printed value, so
+   colour is never the only signal. */
+function severity(pct) { return pct >= 90 ? "crit" : pct >= 75 ? "warn" : ""; }
+
+function deviceIcon(type) {
+  const d = String(type || "").toLowerCase();
+  if (/phone|android|ios/.test(d)) return "i-phone";
+  if (/tablet|ipad/.test(d)) return "i-tablet";
+  if (/server|\bpi\b/.test(d)) return "i-server";
+  if (/mac/.test(d)) return "i-mac";
+  if (/windows/.test(d)) return "i-windows";
+  if (/linux/.test(d)) return "i-linux";
+  return "i-device";
+}
+
+/* ═══ Networking ══════════════════════════════════════════════════════════ */
+async function api(path, options = {}) {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try { message = (await response.json()).error || message; } catch { /* not JSON */ }
+    throw new Error(message);
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+const post = (path, body) => api(path, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+function toast(message) {
+  const el = $("toast");
+  el.textContent = message;
+  el.classList.add("show");
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => el.classList.remove("show"), 2600);
+}
+
+function setConnected(ok) {
+  if (state.connected === ok) return;
+  state.connected = ok;
+  $("conn").classList.toggle("offline", !ok);
+  $("conn-text").textContent = ok ? "Live" : "Reconnecting…";
+}
+
+/* ═══ Rendering ═══════════════════════════════════════════════════════════ */
+function render() {
+  const s = state.snapshot;
+  if (!s) return;
+
+  $("identity").textContent = `${s.identity.username} · ${s.identity.device_type} · ${s.ip}`;
+  document.title = `Bifrost — ${s.identity.username}`;
+
+  // Hero: the number this dashboard exists to answer.
+  $("hero-value").textContent = fmtCount(s.pool.nodes);
+  $("hero-label").textContent = s.pool.nodes === 1
+    ? "device on this network (just this one so far)"
+    : "devices on this network";
+
+  $("pool-cores").textContent = fmtCount(s.pool.cpu_cores);
+  $("pool-ram").textContent = fmtMBasGB(s.pool.ram_available_mb);
+  $("pool-ram-sub").textContent = `of ${fmtMBasGB(s.pool.ram_total_mb)} total`;
+  $("pool-disk").textContent = fmtGB(s.pool.disk_available_gb);
+  $("pool-disk-sub").textContent = `of ${fmtGB(s.pool.disk_total_gb)} total`;
+  $("pool-shared").textContent = fmtCount(s.pool.sharing_nodes);
+  $("pool-shared-sub").textContent = s.pool.sharing_nodes === 1
+    ? "node offering resources" : "nodes offering resources";
+
+  $("badge-peers").textContent = s.online_peers;
+  $("badge-files").textContent = s.transfers.filter(
+    (t) => !["completed", "failed", "rejected"].includes(t.state.state)).length;
+
+  renderSelfMeters(s);
+  renderNetChart();
+  renderPeers(s);
+  renderChat(s);
+  renderTransfers(s);
+  renderCalls(s);
+  renderPeerSelects(s);
+  renderSettings(s);
+}
+
+function renderSelfMeters(s) {
+  const t = s.telemetry;
+  const ramPct = t.ram_total_mb ? (t.ram_used_mb / t.ram_total_mb) * 100 : 0;
+  const diskPct = t.disk_total_gb ? (t.disk_used_gb / t.disk_total_gb) * 100 : 0;
+
+  $("this-host").textContent = `${s.host.hostname} · up ${fmtDuration(t.uptime_secs)}`;
+  $("self-meters").innerHTML = [
+    meter("CPU", t.cpu_usage, `${t.cpu_usage.toFixed(1)}% of ${t.cpu_cores} cores`),
+    meter("RAM", ramPct, `${fmtMBasGB(t.ram_used_mb)} / ${fmtMBasGB(t.ram_total_mb)}`),
+    meter("Disk", diskPct, `${fmtGB(t.disk_used_gb)} / ${fmtGB(t.disk_total_gb)}`),
+  ].join("");
+}
+
+function meter(name, pct, valueText) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return `<div class="meter-row">
+    <span class="meter-name">${name}</span>
+    <span class="meter ${severity(clamped)}" role="img"
+          aria-label="${esc(name)}: ${esc(valueText)}">
+      <span style="width:${clamped.toFixed(1)}%"></span></span>
+    <span class="meter-value">${esc(valueText)}</span>
+  </div>`;
+}
+
+/* ── The throughput chart ────────────────────────────────────────────────
+   A 2px line per series on one shared axis (both are KB/s, so a second
+   axis would be wrong), a 10% area wash beneath, hairline gridlines, and a
+   crosshair tooltip. The table view alongside carries the same numbers. */
+function renderNetChart() {
+  const svg = $("net-chart");
+  const points = state.net;
+  const W = 640, H = 200, PAD_L = 46, PAD_R = 12, PAD_T = 12, PAD_B = 22;
+
+  if (points.length < 2) {
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle"
+      fill="var(--text-3)" font-size="13">Collecting…</text>`;
+    return;
+  }
+
+  const peak = Math.max(1, ...points.map((p) => Math.max(p.rx, p.tx)));
+  const max = niceCeiling(peak);
+  const x = (i) => PAD_L + (i / (points.length - 1)) * (W - PAD_L - PAD_R);
+  const y = (v) => H - PAD_B - (v / max) * (H - PAD_T - PAD_B);
+
+  const parts = [];
+
+  // Gridlines and y ticks, at rounded values.
+  for (let step = 0; step <= 4; step++) {
+    const value = (max / 4) * step;
+    const gy = y(value);
+    parts.push(`<line x1="${PAD_L}" y1="${gy.toFixed(1)}" x2="${W - PAD_R}" y2="${gy.toFixed(1)}"
+      stroke="var(--grid)" stroke-width="1"/>`);
+    parts.push(`<text x="${PAD_L - 8}" y="${(gy + 4).toFixed(1)}" text-anchor="end"
+      fill="var(--text-3)" font-size="11">${formatRate(value)}</text>`);
+  }
+
+  for (const [key, colour] of [["rx", "var(--series-1)"], ["tx", "var(--series-2)"]]) {
+    const line = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(" ");
+    const area = `${line} L${x(points.length - 1).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`;
+    parts.push(`<path d="${area}" fill="${colour}" opacity="0.10"/>`);
+    parts.push(`<path d="${line}" fill="none" stroke="${colour}" stroke-width="2"
+      stroke-linejoin="round" stroke-linecap="round"/>`);
+  }
+
+  // Baseline.
+  parts.push(`<line x1="${PAD_L}" y1="${y(0).toFixed(1)}" x2="${W - PAD_R}" y2="${y(0).toFixed(1)}"
+    stroke="var(--axis)" stroke-width="1"/>`);
+
+  // Crosshair, revealed on hover.
+  parts.push(`<g id="net-cursor" opacity="0">
+    <line y1="${PAD_T}" y2="${H - PAD_B}" stroke="var(--axis)" stroke-width="1"/>
+    <circle r="4.5" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/>
+    <circle r="4.5" fill="var(--series-2)" stroke="var(--surface-1)" stroke-width="2"/>
+  </g>`);
+
+  svg.innerHTML = parts.join("");
+  svg._geometry = { W, H, PAD_L, PAD_R, PAD_T, PAD_B, max, x, y };
+
+  renderNetTable();
+}
+
+function formatRate(kbps) {
+  if (kbps >= 1024) return `${(kbps / 1024).toFixed(1)} MB/s`;
+  if (kbps >= 10) return `${Math.round(kbps)} KB/s`;
+  return `${kbps.toFixed(1)} KB/s`;
+}
+
+/* Round an axis maximum up to 1/2/5 × a power of ten, so ticks are clean. */
+function niceCeiling(value) {
+  const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+  const normalised = value / magnitude;
+  const step = normalised <= 1 ? 1 : normalised <= 2 ? 2 : normalised <= 5 ? 5 : 10;
+  return step * magnitude;
+}
+
+function renderNetTable() {
+  $("net-table-body").innerHTML = state.net.slice().reverse().slice(0, 40).map((p) =>
+    `<tr><td>${fmtTime(p.t)}</td><td>${p.rx.toFixed(1)}</td><td>${p.tx.toFixed(1)}</td></tr>`
+  ).join("");
+}
+
+function bindNetHover() {
+  const wrap = $("net-chart-wrap");
+  const svg = $("net-chart");
+  const tip = $("net-tooltip");
+
+  function move(event) {
+    const geometry = svg._geometry;
+    if (!geometry || state.net.length < 2) return;
+
+    const box = svg.getBoundingClientRect();
+    const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+    const svgX = ((clientX - box.left) / box.width) * geometry.W;
+
+    const span = geometry.W - geometry.PAD_L - geometry.PAD_R;
+    const ratio = (svgX - geometry.PAD_L) / span;
+    const index = Math.max(0, Math.min(state.net.length - 1, Math.round(ratio * (state.net.length - 1))));
+    const point = state.net[index];
+
+    const cursor = svg.querySelector("#net-cursor");
+    if (cursor) {
+      const px = geometry.x(index);
+      cursor.setAttribute("opacity", "1");
+      cursor.querySelector("line").setAttribute("x1", px);
+      cursor.querySelector("line").setAttribute("x2", px);
+      const dots = cursor.querySelectorAll("circle");
+      dots[0].setAttribute("cx", px); dots[0].setAttribute("cy", geometry.y(point.rx));
+      dots[1].setAttribute("cx", px); dots[1].setAttribute("cy", geometry.y(point.tx));
+    }
+
+    tip.innerHTML = `<div class="t-title">${fmtTime(point.t)}</div>
+      <div class="t-row"><span class="swatch" style="background:var(--series-1);width:10px;height:2px"></span>
+        Received<span class="t-val">${formatRate(point.rx)}</span></div>
+      <div class="t-row"><span class="swatch" style="background:var(--series-2);width:10px;height:2px"></span>
+        Sent<span class="t-val">${formatRate(point.tx)}</span></div>`;
+    tip.style.opacity = "1";
+
+    const leftPx = (geometry.x(index) / geometry.W) * box.width;
+    const tipWidth = tip.offsetWidth;
+    tip.style.left = `${Math.max(4, Math.min(box.width - tipWidth - 4, leftPx - tipWidth / 2))}px`;
+    tip.style.top = "6px";
+  }
+
+  function leave() {
+    tip.style.opacity = "0";
+    const cursor = svg.querySelector("#net-cursor");
+    if (cursor) cursor.setAttribute("opacity", "0");
+  }
+
+  wrap.addEventListener("mousemove", move);
+  wrap.addEventListener("mouseleave", leave);
+  wrap.addEventListener("touchstart", move, { passive: true });
+  wrap.addEventListener("touchmove", move, { passive: true });
+  wrap.addEventListener("touchend", leave);
+}
+
+function renderPeers(s) {
+  const grid = $("peer-grid");
+  $("peers-note").textContent =
+    `${s.online_peers} online · ${s.peers.length} known`;
+
+  if (!s.peers.length) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1">
+      No other devices yet. Start Bifrost on another machine on this Wi-Fi —
+      they find each other within a few seconds.</div>`;
+    return;
+  }
+
+  grid.innerHTML = s.peers.map((p) => {
+    const t = p.telemetry;
+    const ramPct = t.ram_total_mb ? (t.ram_used_mb / t.ram_total_mb) * 100 : 0;
+    const latency = p.latency_ms != null ? ` · ${p.latency_ms.toFixed(0)} ms` : "";
+
+    return `<div class="peer ${p.online ? "" : "offline"}">
+      <div class="peer-head">
+        <span class="peer-icon"><svg width="19" height="19" aria-hidden="true">
+          <use href="#${deviceIcon(p.device_type)}"/></svg></span>
+        <span class="peer-id">
+          <div class="peer-name">${esc(p.alias || p.username)}</div>
+          <div class="peer-meta">${esc(p.ip)} · ${esc(p.device_type)}${latency}</div>
+        </span>
+        <span class="status ${p.online ? "on" : "off"}"><span class="dot"></span>${p.online ? "Online" : "Offline"}</span>
+      </div>
+      ${meter("CPU", t.cpu_usage, `${t.cpu_usage.toFixed(0)}%`)}
+      ${meter("RAM", ramPct, `${fmtMBasGB(t.ram_available_mb)} free`)}
+      <div class="peer-actions">
+        <button class="btn small" data-act="ping" data-peer="${esc(p.node_id)}">Ping</button>
+        <button class="btn small" data-act="call" data-peer="${esc(p.node_id)}">Call</button>
+        <button class="btn small" data-act="alias" data-peer="${esc(p.node_id)}"
+                data-current="${esc(p.alias || "")}">Rename</button>
+        <a class="btn small" href="${esc(p.dashboard_url)}" target="_blank" rel="noopener">Open</a>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderChat(s) {
+  const log = $("chat-log");
+  const wasAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+  const me = s.identity.node_id;
+
+  if (!s.chats.length) {
+    log.innerHTML = `<div class="empty">No messages yet. Say hello.</div>`;
+    return;
+  }
+
+  log.innerHTML = s.chats.map((m) => {
+    const mine = m.sender_id === me;
+    const direct = !!m.recipient_id;
+    const label = mine
+      ? (direct ? `You → ${esc(nameOf(m.recipient_id))}` : "You")
+      : (direct ? `${esc(m.sender_name)} → you` : esc(m.sender_name));
+    return `<div class="msg ${mine ? "mine" : ""} ${direct ? "dm" : ""}">
+      <div class="msg-meta">${label} · ${fmtTime(m.timestamp)}</div>
+      <div class="msg-body">${esc(m.content)}</div>
+    </div>`;
+  }).join("");
+
+  if (wasAtBottom) log.scrollTop = log.scrollHeight;
+}
+
+function nameOf(nodeId) {
+  const s = state.snapshot;
+  if (!s) return nodeId;
+  if (nodeId === s.identity.node_id) return s.identity.username;
+  const peer = s.peers.find((p) => p.node_id === nodeId);
+  return peer ? (peer.alias || peer.username) : String(nodeId).slice(0, 8);
+}
+
+function renderTransfers(s) {
+  const container = $("transfers");
+  $("download-dir").textContent = s.download_dir;
+
+  if (!s.transfers.length) {
+    container.innerHTML = `<div class="empty">No transfers yet.</div>`;
+    return;
+  }
+
+  container.innerHTML = s.transfers.slice(0, 25).map((t) => {
+    const pct = t.bytes_total ? (t.bytes_done / t.bytes_total) * 100 : 0;
+    const arrow = t.direction === "incoming" ? "↓" : "↑";
+    const stateName = t.state.state;
+    const detail = t.state.detail ? ` — ${esc(t.state.detail)}` : "";
+    const rate = t.rate_bps > 0 && !["completed", "failed", "rejected"].includes(stateName)
+      ? ` · ${fmtBytes(t.rate_bps)}/s` : "";
+
+    return `<div class="row">
+      <div class="row-main">
+        <div class="row-title">${arrow} ${esc(t.filename)}</div>
+        <div class="row-sub">${esc(t.peer_name)} · ${fmtBytes(t.bytes_done)} of ${fmtBytes(t.bytes_total)}${rate}</div>
+        <div style="margin-top:6px">
+          <span class="meter" style="display:block"><span style="width:${pct.toFixed(1)}%"></span></span>
+        </div>
+      </div>
+      <div style="text-align:right;flex:none">
+        <div style="font-size:12.5px">${esc(labelForState(stateName))}${detail}</div>
+        <div class="row-sub">${pct.toFixed(0)}%</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function labelForState(name) {
+  return { offered: "Offered", accepted: "Accepted", streaming: "Transferring",
+           verifying: "Verifying", completed: "✓ Done", rejected: "Declined",
+           failed: "✕ Failed" }[name] || name;
+}
+
+function renderCalls(s) {
+  const container = $("calls");
+  const active = s.calls.filter((c) => ["ringing", "connected"].includes(c.state));
+  state.activeCall = active.find((c) => c.state === "connected") || null;
+
+  if (!s.calls.length) {
+    container.innerHTML = `<div class="empty">No calls.</div>`;
+    return;
+  }
+
+  container.innerHTML = s.calls.slice(0, 12).map((c) => {
+    const live = ["ringing", "connected"].includes(c.state);
+    return `<div class="row">
+      <div class="row-main">
+        <div class="row-title">${esc(c.peer_name)} ${c.outgoing ? "(outgoing)" : "(incoming)"}</div>
+        <div class="row-sub">${esc(c.state)} · ${fmtDuration(c.duration_secs ?? 0)}
+          · ${c.frames_sent} sent / ${c.frames_received} received</div>
+      </div>
+      ${live ? `<button class="btn small" data-act="talk" data-session="${esc(c.session_id)}">Talk</button>
+                <button class="btn small danger" data-act="hangup" data-session="${esc(c.session_id)}">End</button>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function renderPeerSelects(s) {
+  const online = s.peers.filter((p) => p.online);
+  const options = online.map((p) =>
+    `<option value="${esc(p.node_id)}">${esc(p.alias || p.username)}</option>`).join("");
+
+  for (const [id, placeholder] of [
+    ["chat-target", `<option value="">Everyone</option>`],
+    ["file-target", online.length ? "" : `<option value="">No devices online</option>`],
+    ["call-target", online.length ? "" : `<option value="">No devices online</option>`],
+  ]) {
+    const select = $(id);
+    const previous = select.value;
+    select.innerHTML = placeholder + options;
+    // Keep the user's choice across refreshes if that peer is still there.
+    if ([...select.options].some((o) => o.value === previous)) select.value = previous;
+  }
+}
+
+function renderSettings(s) {
+  const name = $("set-name");
+  if (document.activeElement !== name) name.value = s.identity.username;
+
+  $("sharing-toggle").textContent = s.sharing_enabled ? "Sharing on" : "Sharing off";
+  $("sharing-detail").textContent = s.shared.enabled
+    ? `CPU ${s.shared.cpu_offered_pct.toFixed(0)}% · RAM ${fmtMBasGB(s.shared.ram_offered_mb)} · Disk ${fmtGB(s.shared.disk_offered_gb)}`
+    : "Nothing advertised";
+
+  $("conn-info").innerHTML = [
+    ["Dashboard", s.dashboard_url],
+    ["LAN address", s.ip],
+    ["Node id", s.identity.node_id],
+    ["Host", `${s.host.hostname} · ${s.host.os} · ${s.host.arch}`],
+    ["Ports", `discovery ${s.ports.discovery} · chat ${s.ports.messaging} · files ${s.ports.files} · voice ${s.ports.voice_signal}/${s.ports.voice_audio}`],
+    ["Version", `Bifrost ${s.version}`],
+    ["Uptime", fmtDuration(s.uptime_secs)],
+  ].map(([label, value]) =>
+    `<div class="row"><div class="row-main">
+       <div class="row-sub">${esc(label)}</div>
+       <div class="row-title" style="white-space:normal;overflow-wrap:anywhere">${esc(value)}</div>
+     </div></div>`).join("");
+}
+
+function pushLog(level, text) {
+  state.log.unshift({ level, text, at: new Date() });
+  state.log = state.log.slice(0, 120);
+
+  $("log").innerHTML = state.log.map((entry) =>
+    `<div class="log-line ${esc(entry.level)}">
+       <span class="log-time">${fmtTime(entry.at.toISOString())}</span>
+       <span class="log-text">${esc(entry.text)}</span></div>`).join("");
+}
+
+/* ═══ Data flow ═══════════════════════════════════════════════════════════ */
+async function refresh() {
+  try {
+    const snapshot = await api("/api/snapshot");
+    const previous = state.snapshot;
+    state.snapshot = snapshot;
+
+    // The throughput series is built here rather than server-side: the
+    // dashboard only needs the window it displays, and keeping it client-side
+    // means the node holds no per-viewer state.
+    const t = snapshot.telemetry;
+    if (!previous || previous.telemetry.collected_at !== t.collected_at) {
+      state.net.push({ t: t.collected_at, rx: t.net_rx_kbps, tx: t.net_tx_kbps });
+      if (state.net.length > NET_POINTS) state.net.shift();
+    }
+
+    setConnected(true);
+    render();
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+function connectEvents() {
+  const source = new EventSource("/api/events");
+
+  source.addEventListener("open", () => setConnected(true));
+
+  source.addEventListener("node", (message) => {
+    let event;
+    try { event = JSON.parse(message.data); } catch { return; }
+
+    switch (event.event) {
+      case "notice":
+        pushLog(event.data.level, event.data.text);
+        break;
+      case "chat": {
+        const s = state.snapshot;
+        if (s && event.data.sender_id !== s.identity.node_id) {
+          pushLog("info", `${event.data.sender_name}: ${event.data.content}`);
+        }
+        refresh();
+        break;
+      }
+      case "transfer":
+      case "voice":
+      case "peer_online":
+      case "peer_offline":
+        refresh();
+        break;
+      // Telemetry arrives on the same 2 s cadence as the poll; the poll is
+      // the single writer of the series so samples cannot be double-counted.
+      case "telemetry":
+      default:
+        break;
+    }
+  });
+
+  // EventSource reconnects on its own; just reflect the state.
+  source.addEventListener("error", () => setConnected(false));
+}
+
+async function refreshDownloads() {
+  try {
+    const files = await api("/api/downloads");
+    const container = $("downloads");
+
+    container.innerHTML = files.length
+      ? files.map((f) => `<div class="row">
+          <div class="row-main">
+            <div class="row-title">${esc(f.name)}</div>
+            <div class="row-sub">${fmtBytes(f.size)}</div>
+          </div>
+          <a class="btn small" href="/api/download/${encodeURIComponent(f.name)}" download>Save</a>
+        </div>`).join("")
+      : `<div class="empty">Nothing received yet.</div>`;
+  } catch { /* the panel simply stays as it was */ }
+}
+
+/* ═══ Actions ═════════════════════════════════════════════════════════════ */
+$("chat-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("chat-input");
+  const line = input.value.trim();
+  if (!line) return;
+  input.value = "";
+
+  try {
+    // Everything goes through the command endpoint, so slash commands work
+    // here exactly as they do in the terminal.
+    const target = $("chat-target").value;
+    const result = target && !line.startsWith("/")
+      ? await post("/api/chat", { content: line, recipient: target })
+      : await post("/api/command", { line });
+
+    if (result.text) pushLog("info", result.text);
+    refresh();
+  } catch (e) {
+    toast(e.message);
+    pushLog("error", e.message);
+  }
+});
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-act]");
+  if (!button) return;
+
+  const { act, peer, session, current } = button.dataset;
+  try {
+    if (act === "ping") {
+      const result = await post("/api/ping", { peer });
+      toast(result.text); pushLog("info", result.text);
+    } else if (act === "call") {
+      const result = await post("/api/call", { peer });
+      toast(result.text); pushLog("success", result.text);
+      refresh();
+    } else if (act === "hangup") {
+      const result = await post("/api/hangup", { session });
+      toast(result.text); refresh();
+    } else if (act === "alias") {
+      const alias = prompt("Name for this device (leave empty to clear):", current || "");
+      if (alias === null) return;
+      const result = await post("/api/alias", { peer, alias: alias.trim() || null });
+      toast(result.text); refresh();
+    }
+  } catch (e) {
+    toast(e.message);
+    pushLog("error", e.message);
+  }
+});
+
+$("call-start").addEventListener("click", async () => {
+  const peer = $("call-target").value;
+  if (!peer) return toast("No device selected");
+  try {
+    const result = await post("/api/call", { peer });
+    toast(result.text); pushLog("success", result.text); refresh();
+  } catch (e) { toast(e.message); pushLog("error", e.message); }
+});
+
+$("sharing-toggle").addEventListener("click", async () => {
+  try {
+    const result = await post("/api/sharing", { enabled: !state.snapshot.sharing_enabled });
+    toast(result.text); refresh();
+  } catch (e) { toast(e.message); }
+});
+
+$("set-name-save").addEventListener("click", async () => {
+  const username = $("set-name").value.trim();
+  if (!username) return toast("A name cannot be empty");
+  try {
+    const result = await post("/api/rename", { username });
+    toast(result.text); refresh();
+  } catch (e) { toast(e.message); }
+});
+
+/* ── File upload ── */
+const dropzone = $("dropzone");
+const fileInput = $("file-input");
+
+dropzone.addEventListener("click", () => fileInput.click());
+dropzone.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
+});
+dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("over"); });
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("over"));
+dropzone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropzone.classList.remove("over");
+  sendFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener("change", () => { sendFiles(fileInput.files); fileInput.value = ""; });
+
+async function sendFiles(files) {
+  const peer = $("file-target").value;
+  if (!peer) return toast("Choose a device to send to");
+
+  for (const file of files) {
+    try {
+      const query = `?peer=${encodeURIComponent(peer)}&name=${encodeURIComponent(file.name)}`;
+      const result = await api(`/api/upload${query}`, { method: "POST", body: file });
+      pushLog("info", result.text);
+    } catch (e) {
+      toast(e.message);
+      pushLog("error", `${file.name}: ${e.message}`);
+    }
+  }
+  refresh();
+}
+
+/* ── Push-to-talk ──
+   getUserMedia captures at the device's own rate; frames are downsampled to
+   16 kHz mono 16-bit PCM, which is what the node's audio transport carries. */
+let audioContext = null, micStream = null, micNode = null, playbackTime = 0;
+
+async function startTalking(session) {
+  if (micStream) return;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch {
+    return toast("Microphone permission denied");
+  }
+
+  audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioContext.createMediaStreamSource(micStream);
+  micNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+  micNode.onaudioprocess = (event) => {
+    const input = event.inputBuffer.getChannelData(0);
+    const ratio = audioContext.sampleRate / 16000;
+    const outLength = Math.floor(input.length / ratio);
+    const pcm = new Int16Array(outLength);
+
+    for (let i = 0; i < outLength; i++) {
+      const sample = input[Math.floor(i * ratio)];
+      pcm[i] = Math.max(-1, Math.min(1, sample)) * 0x7fff;
+    }
+
+    fetch(`/api/voice/frame?session=${encodeURIComponent(session)}`,
+      { method: "POST", body: pcm.buffer }).catch(() => {});
+  };
+
+  source.connect(micNode);
+  micNode.connect(audioContext.destination);
+  toast("Transmitting");
+}
+
+function stopTalking() {
+  if (micNode) { micNode.disconnect(); micNode.onaudioprocess = null; micNode = null; }
+  if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+}
+
+document.addEventListener("pointerdown", (e) => {
+  const button = e.target.closest('[data-act="talk"]');
+  if (button) startTalking(button.dataset.session);
+});
+document.addEventListener("pointerup", stopTalking);
+document.addEventListener("pointercancel", stopTalking);
+
+/* Play whatever the peer sent since the last poll. */
+async function pumpAudio() {
+  const call = state.activeCall;
+  if (!call) return;
+
+  try {
+    const data = await api(`/api/voice/frames?session=${encodeURIComponent(call.session_id)}`);
+    if (!data.frames.length) return;
+
+    audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+    playbackTime = Math.max(playbackTime, audioContext.currentTime);
+
+    for (const encoded of data.frames) {
+      const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
+      const samples = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 1);
+
+      const buffer = audioContext.createBuffer(1, samples.length, data.sample_rate);
+      const channel = buffer.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) channel[i] = samples[i] / 0x8000;
+
+      const node = audioContext.createBufferSource();
+      node.buffer = buffer;
+      node.connect(audioContext.destination);
+      node.start(playbackTime);
+      playbackTime += buffer.duration;
+    }
+  } catch { /* the call has probably ended */ }
+}
+
+/* ═══ Chrome ══════════════════════════════════════════════════════════════ */
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", "false"));
+    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+    tab.setAttribute("aria-selected", "true");
+    $(`panel-${tab.dataset.panel}`).classList.add("active");
+    if (tab.dataset.panel === "files") refreshDownloads();
+  });
+});
+
+$("net-table-toggle").addEventListener("click", () => {
+  const table = $("net-table-wrap");
+  const chart = $("net-chart-wrap");
+  const showingTable = table.classList.toggle("hidden");
+  chart.classList.toggle("hidden", !showingTable);
+  $("net-table-toggle").textContent = showingTable ? "Table" : "Chart";
+});
+
+const themeToggle = $("theme-toggle");
+function applyTheme(theme) {
+  if (theme) document.documentElement.setAttribute("data-theme", theme);
+  else document.documentElement.removeAttribute("data-theme");
+
+  const dark = theme === "dark" ||
+    (!theme && matchMedia("(prefers-color-scheme: dark)").matches);
+  $("theme-icon").setAttribute("href", dark ? "#i-sun" : "#i-moon");
+}
+
+themeToggle.addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme");
+  const next = current === "dark" ? "light" : "dark";
+  try { localStorage.setItem("bifrost-theme", next); } catch { /* private mode */ }
+  applyTheme(next);
+  // The chart reads its colours from CSS variables, so redraw after a swap.
+  renderNetChart();
+});
+
+try { applyTheme(localStorage.getItem("bifrost-theme")); } catch { applyTheme(null); }
+
+$("help-body").innerHTML = [
+  ["<text>", "Broadcast a message to every device"],
+  ["/msg &lt;peer&gt; &lt;text&gt;", "Send a private message"],
+  ["/peers", "List discovered devices"],
+  ["/alias &lt;peer&gt; [name]", "Nickname a device, or clear it"],
+  ["/sendfile &lt;peer&gt; &lt;path&gt;", "Send a file by path"],
+  ["/call &lt;peer&gt;", "Start a voice call"],
+  ["/hangup [session]", "End a call"],
+  ["/ping &lt;peer&gt;", "Measure round-trip time"],
+  ["/share on|off", "Toggle resource sharing"],
+  ["/me &lt;name&gt;", "Change your display name"],
+  ["/status", "Show this node's status"],
+].map(([syntax, description]) =>
+  `<tr><td><code>${syntax}</code></td><td style="text-align:left">${description}</td></tr>`).join("");
+
+/* ═══ Go ══════════════════════════════════════════════════════════════════ */
+bindNetHover();
+refresh();
+refreshDownloads();
+connectEvents();
+setInterval(refresh, 2000);
+setInterval(refreshDownloads, 15000);
+setInterval(pumpAudio, 400);
+</script>
+</body>
+</html>

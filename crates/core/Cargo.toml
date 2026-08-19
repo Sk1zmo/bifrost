@@ -1,0 +1,37 @@
+[package]
+name = "bifrost-core"
+description = "Bifrost LAN mesh engine: discovery, chat, file transfer, telemetry, voice"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "bifrost_core"
+# rlib      -> the cli/web crates and integration tests
+# cdylib    -> libbifrost_core.so for Android (JNI / dart:ffi)
+# staticlib -> libbifrost_core.a for iOS (Swift static link)
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+hex.workspace = true
+if-addrs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+socket2.workspace = true
+sysinfo.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
