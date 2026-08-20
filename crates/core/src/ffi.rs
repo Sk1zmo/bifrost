@@ -42,7 +42,7 @@ const EVENT_BUFFER: usize = 256;
 
 // ─── Process-wide state ──────────────────────────────────────────────────────
 
-fn runtime() -> &'static Runtime {
+pub(crate) fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| Runtime::new().expect("the Bifrost FFI could not start a tokio runtime"))
 }
@@ -93,9 +93,203 @@ fn with_node<T>(f: impl FnOnce(&Node) -> T) -> Option<T> {
     }
 }
 
+// ─── Shared implementation ───────────────────────────────────────────────────
+//
+// Both ABIs — the C one below and the JNI one in `ffi_jni` — are thin shells
+// over these. Keeping one implementation is what stops Android and iOS
+// drifting apart in behaviour as the node changes underneath them.
+
+// Used by the JNI layer, which only exists on Android.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn record_error(message: impl Into<String>) {
+    set_error(message);
+}
+
+pub(crate) fn last_error_text() -> String {
+    last_error().lock().map(|e| e.clone()).unwrap_or_default()
+}
+
+pub(crate) fn node_is_running() -> bool {
+    node_slot()
+        .lock()
+        .map(|slot| slot.is_some())
+        .unwrap_or(false)
+}
+
+/// Install a freshly started node, and begin buffering its events.
+pub(crate) fn install_node(node: Node) {
+    let mut rx = node.subscribe();
+    runtime().spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if let Ok(mut buffer) = event_buffer().lock() {
+                        buffer.push_back(event);
+                        while buffer.len() > EVENT_BUFFER {
+                            buffer.pop_front();
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    });
+
+    if let Ok(mut slot) = node_slot().lock() {
+        *slot = Some(node);
+    }
+}
+
+pub(crate) fn shutdown_node() {
+    let node = node_slot().lock().ok().and_then(|mut slot| slot.take());
+    if let Some(node) = node {
+        runtime().block_on(node.shutdown());
+    }
+    if let Ok(mut buffer) = event_buffer().lock() {
+        buffer.clear();
+    }
+}
+
+/// Serialise something derived from the live node, or `"null"`.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn with_node_json<T: serde::Serialize>(f: impl FnOnce(&Node) -> T) -> String {
+    match with_node(f) {
+        Some(value) => serde_json::to_string(&value).unwrap_or_else(|_| "null".into()),
+        None => "null".into(),
+    }
+}
+
+pub(crate) fn drain_events_json() -> String {
+    let events: Vec<NodeEvent> = match event_buffer().lock() {
+        Ok(mut buffer) => buffer.drain(..).collect(),
+        Err(_) => Vec::new(),
+    };
+    serde_json::to_string(&events).unwrap_or_else(|_| "[]".into())
+}
+
+/// Run a command line, returning the [`CommandOutcome`] as JSON.
+///
+/// The outcome is serialised flat — `{"outcome":"message","level":…,"text":…}`
+/// — because that is what `bifrost_core.h` documents and what the Swift and
+/// Kotlin clients read. Wrapping it in another object would silently change
+/// the published C ABI.
+///
+/// [`CommandOutcome`]: crate::node::CommandOutcome
+pub(crate) fn execute_line_json(line: &str) -> String {
+    match with_node(|node| runtime().block_on(node.execute_line(line))) {
+        Some(Ok(Some(outcome))) => {
+            serde_json::to_string(&outcome).unwrap_or_else(|_| "null".into())
+        }
+        Some(Ok(None)) => "null".into(),
+        Some(Err(e)) => {
+            set_error(format!("{e:#}"));
+            "null".into()
+        }
+        None => "null".into(),
+    }
+}
+
+/// Turn an action's result into the 0 / -1 convention both ABIs use.
+fn status<T>(result: Option<anyhow::Result<T>>) -> c_int {
+    match result {
+        Some(Ok(_)) => 0,
+        Some(Err(e)) => {
+            set_error(format!("{e:#}"));
+            -1
+        }
+        None => -1,
+    }
+}
+
+pub(crate) fn send_chat(content: &str, recipient: Option<&str>) -> c_int {
+    clear_error();
+    status(with_node(|node| {
+        runtime().block_on(async {
+            match recipient {
+                Some(peer) => node.direct_message(peer, content).await,
+                None => node.broadcast(content).await,
+            }
+        })
+    }))
+}
+
+pub(crate) fn send_file(peer: &str, path: &str) -> c_int {
+    clear_error();
+    status(with_node(|node| {
+        runtime().block_on(node.send_file(peer, std::path::Path::new(path)))
+    }))
+}
+
+pub(crate) fn set_alias(peer: &str, alias: Option<String>) -> c_int {
+    clear_error();
+    status(with_node(|node| {
+        runtime().block_on(node.set_alias(peer, alias))
+    }))
+}
+
+pub(crate) fn set_sharing(enabled: bool) -> c_int {
+    clear_error();
+    status(with_node(|node| {
+        runtime().block_on(node.set_sharing(enabled))
+    }))
+}
+
+pub(crate) fn rename(name: &str) -> c_int {
+    clear_error();
+    status(with_node(|node| runtime().block_on(node.rename(name))))
+}
+
+/// Place a call, returning the session id.
+pub(crate) fn start_call(peer: &str) -> Option<String> {
+    clear_error();
+    let result = with_node(|node| {
+        runtime().block_on(async {
+            let resolved = node.registry.resolve(peer).await?;
+            node.voice
+                .call(&node.registry, &resolved.node_id)
+                .await
+                .ok()
+        })
+    });
+
+    let session = result.flatten();
+    if session.is_none() && last_error_text().is_empty() {
+        set_error(format!("could not call \"{peer}\""));
+    }
+    session
+}
+
+pub(crate) fn hang_up(session: Option<&str>) -> c_int {
+    clear_error();
+    status(with_node(|node| runtime().block_on(node.hang_up(session))))
+}
+
+pub(crate) fn send_audio_frame(session: &str, pcm: &[u8]) -> c_int {
+    status(with_node(|node| {
+        runtime().block_on(node.voice.send_frame(session, AudioCodec::Pcm16Le, pcm))
+    }))
+}
+
+/// Drain received audio as a JSON array of base64 frames.
+pub(crate) fn take_audio_json(session: &str) -> String {
+    use base64::Engine as _;
+
+    match with_node(|node| runtime().block_on(node.voice.take_incoming(session))) {
+        Some(frames) => {
+            let encoded: Vec<String> = frames
+                .iter()
+                .map(|f| base64::engine::general_purpose::STANDARD.encode(f))
+                .collect();
+            serde_json::to_string(&encoded).unwrap_or_else(|_| "[]".into())
+        }
+        None => "[]".into(),
+    }
+}
+
 // ─── Conversions ─────────────────────────────────────────────────────────────
 
-/// Borrow a C string as `&str`. `NULL` and invalid UTF-8 both yield `None`.
+/// Borrow a C string as `String`. `NULL` and invalid UTF-8 both yield `None`.
 ///
 /// # Safety
 /// `ptr` must be null or a valid NUL-terminated C string that stays alive for
@@ -173,17 +367,8 @@ pub unsafe extern "C" fn bifrost_start(config_path: *const c_char) -> c_int {
     guard_int("bifrost_start", || {
         clear_error();
 
-        {
-            let slot = match node_slot().lock() {
-                Ok(slot) => slot,
-                Err(_) => {
-                    set_error("the node lock is poisoned");
-                    return -1;
-                }
-            };
-            if slot.is_some() {
-                return 1;
-            }
+        if node_is_running() {
+            return 1;
         }
 
         let path = unsafe { cstr(config_path) }
@@ -198,40 +383,13 @@ pub unsafe extern "C" fn bifrost_start(config_path: *const c_char) -> c_int {
             }
         };
 
-        let node = match runtime().block_on(Node::start(config, &path)) {
-            Ok(node) => node,
-            Err(e) => {
-                set_error(format!("could not start the node: {e:#}"));
-                return -1;
-            }
-        };
-
-        // Drain the event bus into a buffer the client can poll.
-        let mut rx = node.subscribe();
-        runtime().spawn(async move {
-            loop {
-                match rx.recv().await {
-                    Ok(event) => {
-                        if let Ok(mut buffer) = event_buffer().lock() {
-                            buffer.push_back(event);
-                            while buffer.len() > EVENT_BUFFER {
-                                buffer.pop_front();
-                            }
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-                }
-            }
-        });
-
-        match node_slot().lock() {
-            Ok(mut slot) => {
-                *slot = Some(node);
+        match runtime().block_on(Node::start(config, &path)) {
+            Ok(node) => {
+                install_node(node);
                 0
             }
-            Err(_) => {
-                set_error("the node lock is poisoned");
+            Err(e) => {
+                set_error(format!("could not start the node: {e:#}"));
                 -1
             }
         }
@@ -243,20 +401,7 @@ pub unsafe extern "C" fn bifrost_start(config_path: *const c_char) -> c_int {
 pub extern "C" fn bifrost_stop() -> c_int {
     guard_int("bifrost_stop", || {
         clear_error();
-        let node = match node_slot().lock() {
-            Ok(mut slot) => slot.take(),
-            Err(_) => {
-                set_error("the node lock is poisoned");
-                return -1;
-            }
-        };
-
-        if let Some(node) = node {
-            runtime().block_on(node.shutdown());
-        }
-        if let Ok(mut buffer) = event_buffer().lock() {
-            buffer.clear();
-        }
+        shutdown_node();
         0
     })
 }
@@ -264,23 +409,13 @@ pub extern "C" fn bifrost_stop() -> c_int {
 /// `1` if a node is running, otherwise `0`.
 #[no_mangle]
 pub extern "C" fn bifrost_is_running() -> c_int {
-    guard_int("bifrost_is_running", || {
-        c_int::from(
-            node_slot()
-                .lock()
-                .map(|slot| slot.is_some())
-                .unwrap_or(false),
-        )
-    })
+    guard_int("bifrost_is_running", || c_int::from(node_is_running()))
 }
 
 /// The most recent error, or an empty string. Caller frees.
 #[no_mangle]
 pub extern "C" fn bifrost_last_error() -> *mut c_char {
-    guard_string("bifrost_last_error", || {
-        let message = last_error().lock().map(|e| e.clone()).unwrap_or_default();
-        out_string(message)
-    })
+    guard_string("bifrost_last_error", || out_string(last_error_text()))
 }
 
 /// This build's version. Caller frees.
@@ -385,21 +520,15 @@ pub extern "C" fn bifrost_calls_json() -> *mut c_char {
 /// Poll from the UI's existing refresh timer. Returns `[]` when idle.
 #[no_mangle]
 pub extern "C" fn bifrost_poll_events() -> *mut c_char {
-    guard_string("bifrost_poll_events", || {
-        let events: Vec<NodeEvent> = match event_buffer().lock() {
-            Ok(mut buffer) => buffer.drain(..).collect(),
-            Err(_) => Vec::new(),
-        };
-        out_json(&events)
-    })
+    guard_string("bifrost_poll_events", || out_string(drain_events_json()))
 }
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
 
 /// Run a command line exactly as the terminal dashboard would.
 ///
-/// Accepts plain text (broadcast) or any slash command. Returns the
-/// [`CommandOutcome`](crate::node::CommandOutcome) as JSON. Caller frees.
+/// Accepts plain text (broadcast) or any slash command. Returns the outcome as
+/// JSON, or the string `"null"` for an empty line. Caller frees.
 ///
 /// # Safety
 /// `line` must be a valid NUL-terminated C string.
@@ -411,17 +540,7 @@ pub unsafe extern "C" fn bifrost_execute(line: *const c_char) -> *mut c_char {
             set_error("bifrost_execute needs a valid UTF-8 string");
             return std::ptr::null_mut();
         };
-
-        match with_node(|node| runtime().block_on(node.execute_line(&line))) {
-            Some(Ok(Some(outcome))) => out_json(&outcome),
-            // An empty line is a no-op, not an error.
-            Some(Ok(None)) => out_string("null"),
-            Some(Err(e)) => {
-                set_error(format!("{e:#}"));
-                std::ptr::null_mut()
-            }
-            None => std::ptr::null_mut(),
-        }
+        out_string(execute_line_json(&line))
     })
 }
 
@@ -440,25 +559,7 @@ pub unsafe extern "C" fn bifrost_send_chat(
             set_error("bifrost_send_chat needs a message");
             return -1;
         };
-        let recipient = unsafe { cstr(recipient) };
-
-        let result = with_node(|node| {
-            runtime().block_on(async {
-                match &recipient {
-                    Some(peer) => node.direct_message(peer, &content).await,
-                    None => node.broadcast(&content).await,
-                }
-            })
-        });
-
-        match result {
-            Some(Ok(_)) => 0,
-            Some(Err(e)) => {
-                set_error(format!("{e:#}"));
-                -1
-            }
-            None => -1,
-        }
+        send_chat(&content, unsafe { cstr(recipient) }.as_deref())
     })
 }
 
@@ -474,17 +575,7 @@ pub unsafe extern "C" fn bifrost_send_file(peer: *const c_char, path: *const c_c
             set_error("bifrost_send_file needs a peer and a path");
             return -1;
         };
-
-        match with_node(|node| {
-            runtime().block_on(node.send_file(&peer, std::path::Path::new(&path)))
-        }) {
-            Some(Ok(_)) => 0,
-            Some(Err(e)) => {
-                set_error(format!("{e:#}"));
-                -1
-            }
-            None => -1,
-        }
+        send_file(&peer, &path)
     })
 }
 
@@ -500,33 +591,14 @@ pub unsafe extern "C" fn bifrost_set_alias(peer: *const c_char, alias: *const c_
             set_error("bifrost_set_alias needs a peer");
             return -1;
         };
-        let alias = unsafe { cstr(alias) };
-
-        match with_node(|node| runtime().block_on(node.set_alias(&peer, alias))) {
-            Some(Ok(_)) => 0,
-            Some(Err(e)) => {
-                set_error(format!("{e:#}"));
-                -1
-            }
-            None => -1,
-        }
+        set_alias(&peer, unsafe { cstr(alias) })
     })
 }
 
 /// Turn resource sharing on (non-zero) or off (zero).
 #[no_mangle]
 pub extern "C" fn bifrost_set_sharing(enabled: c_int) -> c_int {
-    guard_int("bifrost_set_sharing", || {
-        clear_error();
-        match with_node(|node| runtime().block_on(node.set_sharing(enabled != 0))) {
-            Some(Ok(_)) => 0,
-            Some(Err(e)) => {
-                set_error(format!("{e:#}"));
-                -1
-            }
-            None => -1,
-        }
-    })
+    guard_int("bifrost_set_sharing", || set_sharing(enabled != 0))
 }
 
 /// Change this node's display name.
@@ -541,15 +613,7 @@ pub unsafe extern "C" fn bifrost_rename(name: *const c_char) -> c_int {
             set_error("bifrost_rename needs a name");
             return -1;
         };
-
-        match with_node(|node| runtime().block_on(node.rename(&name))) {
-            Some(Ok(_)) => 0,
-            Some(Err(e)) => {
-                set_error(format!("{e:#}"));
-                -1
-            }
-            None => -1,
-        }
+        rename(&name)
     })
 }
 
@@ -568,24 +632,9 @@ pub unsafe extern "C" fn bifrost_call(peer: *const c_char) -> *mut c_char {
             return std::ptr::null_mut();
         };
 
-        let result = with_node(|node| {
-            runtime().block_on(async {
-                let resolved = node.registry.resolve(&peer).await?;
-                node.voice
-                    .call(&node.registry, &resolved.node_id)
-                    .await
-                    .ok()
-            })
-        });
-
-        match result.flatten() {
+        match start_call(&peer) {
             Some(session_id) => out_string(session_id),
-            None => {
-                if last_error().lock().map(|e| e.is_empty()).unwrap_or(true) {
-                    set_error(format!("could not call \"{peer}\""));
-                }
-                std::ptr::null_mut()
-            }
+            None => std::ptr::null_mut(),
         }
     })
 }
@@ -598,16 +647,7 @@ pub unsafe extern "C" fn bifrost_call(peer: *const c_char) -> *mut c_char {
 pub unsafe extern "C" fn bifrost_hangup(session: *const c_char) -> c_int {
     guard_int("bifrost_hangup", || {
         clear_error();
-        let session = unsafe { cstr(session) };
-
-        match with_node(|node| runtime().block_on(node.hang_up(session.as_deref()))) {
-            Some(Ok(_)) => 0,
-            Some(Err(e)) => {
-                set_error(format!("{e:#}"));
-                -1
-            }
-            None => -1,
-        }
+        hang_up(unsafe { cstr(session) }.as_deref())
     })
 }
 
@@ -635,17 +675,7 @@ pub unsafe extern "C" fn bifrost_voice_send_frame(
             return -1;
         }
 
-        let frame = unsafe { std::slice::from_raw_parts(pcm, len) };
-        match with_node(|node| {
-            runtime().block_on(node.voice.send_frame(&session, AudioCodec::Pcm16Le, frame))
-        }) {
-            Some(Ok(())) => 0,
-            Some(Err(e)) => {
-                set_error(format!("{e:#}"));
-                -1
-            }
-            None => -1,
-        }
+        send_audio_frame(&session, unsafe { std::slice::from_raw_parts(pcm, len) })
     })
 }
 
@@ -659,23 +689,11 @@ pub unsafe extern "C" fn bifrost_voice_send_frame(
 #[no_mangle]
 pub unsafe extern "C" fn bifrost_voice_take_frames(session: *const c_char) -> *mut c_char {
     guard_string("bifrost_voice_take_frames", || {
-        use base64::Engine as _;
-
         let Some(session) = (unsafe { cstr(session) }) else {
             set_error("bifrost_voice_take_frames needs a session id");
             return std::ptr::null_mut();
         };
-
-        match with_node(|node| runtime().block_on(node.voice.take_incoming(&session))) {
-            Some(frames) => {
-                let encoded: Vec<String> = frames
-                    .iter()
-                    .map(|f| base64::engine::general_purpose::STANDARD.encode(f))
-                    .collect();
-                out_json(&encoded)
-            }
-            None => std::ptr::null_mut(),
-        }
+        out_string(take_audio_json(&session))
     })
 }
 

@@ -7,6 +7,17 @@ artifacts/
 downloads/
 .bifrost/
 
+# Android
+clients/android/.gradle/
+clients/android/build/
+clients/android/app/build/
+clients/android/local.properties
+clients/android/app/src/main/jniLibs/
+*.apk
+*.aab
+*.keystore
+*.jks
+
 # Flutter
 clients/flutter/.dart_tool/
 clients/flutter/build/
@@ -17,3 +28,4 @@ clients/flutter/ios/Runner/libbifrost_core.a
 # Xcode
 clients/ios-swift/**/xcuserdata/
 clients/ios-swift/**/*.a
+clients/ios-swift/**/*.xcframework

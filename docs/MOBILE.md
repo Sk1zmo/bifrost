@@ -28,28 +28,80 @@ Two are included and both link the same Rust core:
 
 ---
 
-## Android
+## Android — the native app
 
-### Prerequisites
+`clients/android` is a Kotlin + Jetpack Compose app that links the Rust core
+over JNI. It is the recommended Android client: no Flutter SDK, and nothing
+between the UI and the engine.
 
-- [Flutter](https://docs.flutter.dev/get-started/install) 3.3+
-- Android Studio, with the **NDK** installed (SDK Manager → SDK Tools → NDK)
-- Rust with the Android targets
+### One command
 
-### Build the core
+```powershell
+.\scripts\build-apk.ps1
+```
+
+That is the whole build. On first run it downloads the Android SDK, the NDK and
+Gradle (about 4 GB, once), cross-compiles the Rust core for `arm64-v8a` and
+`armeabi-v7a`, and produces a signed APK at
+`dist\bifrost-1.0.0-android.apk` (~14 MB).
+
+The only prerequisites are a **JDK 17 or newer** and **Rust**. Everything else
+is fetched.
+
+Useful switches:
+
+```powershell
+.\scripts\build-apk.ps1 -Variant debug     # debug build
+.\scripts\build-apk.ps1 -SkipNative        # Kotlin only, reuse the .so
+.\scripts\build-apk.ps1 -SdkRoot D:\Android\Sdk
+```
+
+### Installing it
+
+Over USB, with developer options and USB debugging enabled:
+
+```powershell
+adb install -r dist\bifrost-1.0.0-android.apk
+```
+
+Or copy the APK to the phone and tap it. Android asks permission to install
+from that source the first time — expected for any sideloaded app.
+
+### Doing it by hand
+
+If you would rather run the steps yourself:
 
 ```sh
 export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/26.1.10909125
-./scripts/build-android.sh
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=\n  $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/<host>/bin/aarch64-linux-android24-clang
+
+cargo build --release --target aarch64-linux-android -p bifrost-core
+cp target/aarch64-linux-android/release/libbifrost_core.so \n   clients/android/app/src/main/jniLibs/arm64-v8a/
+
+cd clients/android && gradle assembleRelease
 ```
 
-This builds `libbifrost_core.so` for all four ABIs and copies each into
-`clients/flutter/android/app/src/main/jniLibs/<abi>/`. Narrow it if you only
-need one:
+Two things bite here, both silently:
+
+- **`local.properties` must use forward slashes.** Java properties treat `\`
+  as an escape, so `sdk.dir=C:\Android\Sdk` parses to `C:AndroidSdk` and the
+  build fails with "The filename, directory name, or volume label syntax is
+  incorrect". Write `sdk.dir=C:/Android/Sdk`.
+- **`abiFilters` must match the libraries you actually built.** Claiming an ABI
+  with no `.so` in it produces an APK that installs and then dies on launch
+  with `UnsatisfiedLinkError`.
+
+### Flutter, as an alternative
+
+`clients/flutter` is a second, complete client that builds for Android **and**
+iOS from one codebase. Use it if you would rather have both from one project:
 
 ```sh
-./scripts/build-android.sh arm64-v8a
+./scripts/build-android.sh          # the same .so, into the Flutter project
+cd clients/flutter && flutter run
 ```
+
+Supported ABIs, for either client:
 
 | ABI | Rust target | Covers |
 |---|---|---|
@@ -58,20 +110,12 @@ need one:
 | `x86_64` | `x86_64-linux-android` | Emulators |
 | `x86` | `i686-linux-android` | Old emulators |
 
-### Build the app
-
-```sh
-cd clients/flutter
-flutter pub get
-flutter run                    # to a connected device
-flutter build apk --release    # a distributable APK
-```
-
-The APK lands in `build/app/outputs/flutter-apk/app-release.apk`.
+The native app ships the first two; `build-apk.ps1` builds exactly those.
 
 ### Permissions
 
-Add these to `android/app/src/main/AndroidManifest.xml`:
+Both clients declare these. `clients/android` already has them in its
+manifest:
 
 ```xml
 <uses-permission android:name="android.permission.INTERNET" />
@@ -84,6 +128,9 @@ Add these to `android/app/src/main/AndroidManifest.xml`:
 <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
                  android:usesPermissionFlags="neverForLocation" />
 ```
+
+`INTERNET` is required even though Bifrost never leaves the LAN: Android gates
+all socket creation behind it.
 
 Bifrost sends plain broadcast alongside multicast, which usually reaches
 Android without a `MulticastLock`. If discovery is unreliable on a particular

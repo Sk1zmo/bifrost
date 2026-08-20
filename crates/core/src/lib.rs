@@ -40,7 +40,8 @@
 //! | [`util`] | Identity, configuration, logging |
 //! | [`events`] | The node-wide event bus |
 //! | [`node`] | [`Node`], which owns all of the above |
-//! | [`ffi`] | C ABI for the Android and iOS clients |
+//! | [`ffi`] | C ABI for the iOS client and any C caller |
+//! | `ffi_jni` | JNI entry points for the Android client (Android only) |
 //!
 //! The wire protocol is specified in `docs/PROTOCOL.md`.
 
@@ -50,6 +51,10 @@
 pub mod chat;
 pub mod events;
 pub mod ffi;
+/// JNI entry points for the Android client. Android only; every other target
+/// uses the C ABI in [`ffi`].
+#[cfg(target_os = "android")]
+pub mod ffi_jni;
 pub mod files;
 pub mod net;
 pub mod node;

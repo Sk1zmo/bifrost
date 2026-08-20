@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose supplies the real theme; this only needs to exist so the
+         window has sane colours before the first frame. -->
+    <style name="Theme.Bifrost" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

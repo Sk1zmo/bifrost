@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Bifrost mark: a "B" on the blue/orange gradient the dashboards use. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Glyph sized to the 72dp safe zone an adaptive icon guarantees. -->
+    <path
+        android:pathData="M40,34h16a11,11 0,0 1,0 22h-16z M40,56h18a11,11 0,0 1,0 22h-18z M40,34v44"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

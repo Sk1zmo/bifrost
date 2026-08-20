@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Received files live under the app's own storage. -->
+    <files-path name="bifrost_downloads" path="bifrost/downloads/" />
+    <files-path name="bifrost_outbox" path="outbox/" />
+</paths>
