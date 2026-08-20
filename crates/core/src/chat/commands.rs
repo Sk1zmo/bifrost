@@ -24,6 +24,20 @@ pub enum Command {
     Ping { peer: String },
     /// `/share on|off`
     Share(bool),
+    /// `/compute` — what the network can run, and where.
+    Compute,
+    /// `/compute on|off` — share this machine's hardware.
+    ComputeShare(bool),
+    /// `/pair` — show a code for another device to type.
+    PairShow,
+    /// `/pair <peer> <code>` — use another device's hardware.
+    PairWith { peer: String, code: String },
+    /// `/unpair <peer>` — withdraw a device's access.
+    Unpair { peer: String },
+    /// `/run <model-or-task> <prompt-or-parameters>`
+    Run { what: String, arguments: String },
+    /// `/jobs` — what is queued, running and finished.
+    Jobs,
     /// `/me <name>` — change this node's display name.
     Rename(String),
     /// `/clear`
@@ -49,6 +63,13 @@ pub const HELP: &[(&str, &str)] = &[
     ("/hangup [session]", "End a call"),
     ("/ping <peer>", "Measure round-trip time to a peer"),
     ("/share on|off", "Toggle resource sharing"),
+    ("/compute", "Show what the network can run, and where"),
+    ("/compute on|off", "Share this machine's hardware, or stop"),
+    ("/pair", "Show a code, so another device may use this one"),
+    ("/pair <peer> <code>", "Use another device's hardware"),
+    ("/unpair <peer>", "Withdraw a device's access to this one"),
+    ("/run <model|task> <text>", "Run work on whichever device suits it"),
+    ("/jobs", "Show queued, running and finished work"),
     ("/me <name>", "Change your display name"),
     ("/status", "Show this node's status"),
     ("/clear", "Clear the message pane"),
@@ -138,6 +159,42 @@ pub fn parse(line: &str) -> Option<Command> {
             _ => usage("/msg <peer> <message>"),
         },
         "/peers" | "/list" => Some(Command::Peers),
+        "/compute" | "/gpu" => match rest.to_ascii_lowercase().as_str() {
+            "" => Some(Command::Compute),
+            "on" | "yes" | "true" => Some(Command::ComputeShare(true)),
+            "off" | "no" | "false" => Some(Command::ComputeShare(false)),
+            _ => usage("/compute [on|off]"),
+        },
+        "/pair" => {
+            if rest.is_empty() {
+                return Some(Command::PairShow);
+            }
+            match split_peer(rest) {
+                Some((peer, code)) if !code.trim().is_empty() => Some(Command::PairWith {
+                    peer,
+                    code: code.trim().to_string(),
+                }),
+                _ => usage("/pair, or /pair <peer> <code>"),
+            }
+        }
+        "/unpair" | "/revoke" => match require_peer(rest, "/unpair <peer>") {
+            Ok(peer) => Some(Command::Unpair { peer }),
+            Err(invalid) => invalid,
+        },
+        "/run" => match rest.split_once(char::is_whitespace) {
+            Some((what, arguments)) if !arguments.trim().is_empty() => Some(Command::Run {
+                what: what.to_string(),
+                arguments: arguments.trim().to_string(),
+            }),
+            // A task with no parameters is legitimate; a model with no prompt
+            // is not, but the node knows which this is and can say so.
+            _ if !rest.is_empty() => Some(Command::Run {
+                what: rest.to_string(),
+                arguments: String::new(),
+            }),
+            _ => usage("/run <model or task> <prompt, or name=value pairs>"),
+        },
+        "/jobs" | "/queue" => Some(Command::Jobs),
         "/alias" | "/nick" => match split_peer(rest) {
             Some((peer, alias)) => Some(Command::Alias {
                 peer,
@@ -197,6 +254,65 @@ fn unquote(s: &str) -> &str {
         }
     }
     s
+}
+
+#[cfg(test)]
+mod compute_command_tests {
+    use super::*;
+
+    #[test]
+    fn compute_reads_as_a_question_or_a_switch() {
+        assert!(matches!(parse("/compute"), Some(Command::Compute)));
+        assert!(matches!(parse("/compute on"), Some(Command::ComputeShare(true))));
+        assert!(matches!(parse("/compute OFF"), Some(Command::ComputeShare(false))));
+        assert!(matches!(parse("/compute sideways"), Some(Command::Invalid(_))));
+    }
+
+    #[test]
+    fn pairing_has_both_halves() {
+        assert!(matches!(parse("/pair"), Some(Command::PairShow)));
+
+        // A device name with a space has to work: a phone that joins from a
+        // browser is named "Kailosh iPhone" by default.
+        let Some(Command::PairWith { peer, code }) = parse("/pair \"Kailosh iPhone\" 913746")
+        else {
+            panic!("a quoted peer must parse");
+        };
+        assert_eq!(peer, "Kailosh iPhone");
+        assert_eq!(code, "913746");
+
+        assert!(matches!(parse("/pair workshop-nuc"), Some(Command::Invalid(_))));
+    }
+
+    #[test]
+    fn run_keeps_everything_after_the_name_as_one_argument() {
+        // A prompt is prose and must survive intact, spaces and all.
+        let Some(Command::Run { what, arguments }) = parse("/run llama3.2:3b  why is the sky blue?")
+        else {
+            panic!("a prompt must parse");
+        };
+        assert_eq!(what, "llama3.2:3b");
+        assert_eq!(arguments, "why is the sky blue?");
+
+        // A task may legitimately take none.
+        let Some(Command::Run { what, arguments }) = parse("/run nightly-backup") else {
+            panic!("a bare task must parse");
+        };
+        assert_eq!(what, "nightly-backup");
+        assert!(arguments.is_empty());
+
+        assert!(matches!(parse("/run"), Some(Command::Invalid(_))));
+    }
+
+    #[test]
+    fn every_new_command_is_in_the_help() {
+        for verb in ["/compute", "/pair", "/unpair", "/run", "/jobs"] {
+            assert!(
+                HELP.iter().any(|(name, _)| name.starts_with(verb)),
+                "{verb} is missing from /help"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

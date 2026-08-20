@@ -498,6 +498,16 @@ overtakes an overnight render.
 Nothing runs on your hardware until you approve the device, and a peer can
 only ever name a model or a task you declared — never a command.
 
+From a terminal, without a dashboard:
+
+```sh
+bifrost compute                 # what the network can run, and where
+bifrost compute on              # share this machine's hardware
+bifrost pair                    # show a code for another device to type
+bifrost submit llama3.2:3b "summarise this"
+bifrost jobs                    # what is queued, running, finished, and why
+```
+
 Full detail, including the security model, in [COMPUTE.md](COMPUTE.md).
 
 ---

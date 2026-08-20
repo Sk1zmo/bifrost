@@ -319,6 +319,41 @@ Be clear-eyed:
 
 ---
 
+## 7a. From a terminal
+
+Everything the dashboard does, the same code path drives from a command line —
+which is what a script, a cron job or an ssh session has.
+
+```sh
+bifrost compute                 # what the network can run, and where
+bifrost compute on              # share this machine's hardware
+bifrost pair                    # show a code for another device to type
+bifrost pair workshop-nuc 913746
+bifrost submit llama3.2:3b "summarise this in one line"
+bifrost submit render scene=/data/city.blend output=/tmp/frame
+bifrost jobs                    # queued, running, finished, and why one failed
+```
+
+```
+$ bifrost compute
+1 device(s) sharing · 1 accelerator(s) · 10235 MB VRAM · 24 threads · 2 slot(s) free
+  workshop-nuc — 0/2 busy · NVIDIA GeForce RTX 4060 Laptop GPU · 8 GB
+      models: llama3.2:3b, qwen2.5-coder:7b
+      tasks:  render, wordcount
+```
+
+Inside either dashboard the same things are `/compute`, `/pair`, `/run` and
+`/jobs`. It is one implementation: the command a phone taps, a terminal types
+and the REST API posts all reach the same `Node::execute`.
+
+`run` already means "start a node here", so the command-line verb for work
+that goes out to the network is `submit`.
+
+**A machine never pairs with itself.** With one computer, a GPU and a model,
+every job is placed locally — pairing applies to *other* devices.
+
+---
+
 ## 8. The API
 
 | Endpoint | Method | Purpose |

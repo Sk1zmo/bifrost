@@ -109,6 +109,31 @@ enum Command {
         /// File to send.
         path: PathBuf,
     },
+    /// Show what the network can run, or switch this device's sharing on and off.
+    Compute {
+        /// `on` or `off`. Omit to show what the network can do.
+        state: Option<String>,
+    },
+    /// Show a pairing code, or enter another device's.
+    Pair {
+        /// The device whose hardware you want to use. Omit to show a code.
+        peer: Option<String>,
+        /// The code shown on that device.
+        code: Option<String>,
+    },
+    /// Submit a model or a declared task to whichever device suits it.
+    ///
+    /// `run` already means "start a node here", so work that goes out to the
+    /// network is submitted rather than run.
+    Submit {
+        /// A model name, or a task the target's owner declared.
+        what: String,
+        /// A prompt, or `name=value` pairs for a task.
+        #[arg(trailing_var_arg = true)]
+        arguments: Vec<String>,
+    },
+    /// Show queued, running and finished work.
+    Jobs,
     /// Show where the configuration lives and what it contains.
     Config,
     /// Install or remove Bifrost as a background service.
@@ -176,6 +201,27 @@ async fn run(mut cli: Cli) -> Result<()> {
             return scan::run(peers, this, options).await;
         }
         Command::Chat { words } => return client_command(&cli, &words.join(" ")).await,
+        Command::Compute { state } => {
+            let line = match state {
+                Some(state) => format!("/compute {state}"),
+                None => "/compute".to_string(),
+            };
+            return client_command(&cli, &line).await;
+        }
+        Command::Pair { peer, code } => {
+            let line = match (peer, code) {
+                (Some(peer), Some(code)) => format!("/pair \"{peer}\" {code}"),
+                (Some(_), None) => {
+                    anyhow::bail!("give the code as well: bifrost pair <peer> <code>")
+                }
+                _ => "/pair".to_string(),
+            };
+            return client_command(&cli, &line).await;
+        }
+        Command::Submit { what, arguments } => {
+            return client_command(&cli, &format!("/run {what} {}", arguments.join(" "))).await;
+        }
+        Command::Jobs => return client_command(&cli, "/jobs").await,
         Command::Send { peer, path } => {
             let absolute = path
                 .canonicalize()

@@ -231,6 +231,14 @@ impl ComputeService {
         if !self.has_capacity().await {
             return Err("this device is already at its job limit".into());
         }
+        // A machine does not pair with itself. The orchestrator places work
+        // locally whenever nothing better is free — and on a single machine
+        // with a GPU and a model, that is *every* job — so without this, the
+        // ordinary one-computer case fails with "not paired with that one",
+        // naming the device you are sitting at.
+        if requester == self.node_id {
+            return Ok(());
+        }
         self.trust
             .authorise(requester, token)
             .await
@@ -581,6 +589,45 @@ mod tests {
             .to_string();
 
         assert!(error.contains("paired"), "got: {error}");
+    }
+
+    #[tokio::test]
+    async fn a_node_does_not_have_to_pair_with_itself() {
+        // The orchestrator places work locally whenever nothing better is
+        // free, and on a single machine that is every job. Requiring the node
+        // to pair with itself made the ordinary one-computer case fail with
+        // "this device has not been paired with that one", naming the machine
+        // you are sitting at.
+        let (_service, addr, _shutdown) = service(true, true).await;
+
+        let itself = ComputeService::new(
+            "worker".into(),
+            "worker".into(),
+            false,
+            2,
+            true,
+            EventBus::new(),
+        );
+
+        let (tx, _rx) = mpsc::channel::<String>(8);
+        let response = itself
+            .dispatch(
+                addr,
+                ComputeRequest::RunTask(TaskRequest {
+                    requester: "worker".into(),
+                    token: None,
+                    task: "render".into(),
+                    parameters: HashMap::new(),
+                }),
+                tx,
+            )
+            .await;
+
+        // It may fail for want of the program; it must not fail for pairing.
+        if let Err(e) = &response {
+            let text = e.to_string();
+            assert!(!text.contains("paired"), "refused its own work: {text}");
+        }
     }
 
     #[tokio::test]

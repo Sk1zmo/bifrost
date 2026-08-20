@@ -63,6 +63,20 @@ pub struct NodeSnapshot {
     pub captured_at: DateTime<Utc>,
 }
 
+/// `name=value` pairs from a command line.
+///
+/// Deliberately not shell-like: whitespace separates, a value is taken
+/// literally, and nothing is expanded — because each of these becomes exactly
+/// one argument to a command the owner of the target machine declared.
+fn parse_parameters(text: &str) -> std::collections::HashMap<String, String> {
+    text.split_whitespace()
+        .filter_map(|token| {
+            let (name, value) = token.split_once('=')?;
+            (!name.is_empty()).then(|| (name.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
 /// Static facts about the host, in a serialisable shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostSummary {
@@ -844,6 +858,13 @@ impl Node {
             Command::HangUp { session } => self.hang_up(session.as_deref()).await,
             Command::Ping { peer } => self.ping(&peer).await,
             Command::Share(enabled) => self.set_sharing(enabled).await,
+            Command::Compute => self.describe_compute().await,
+            Command::ComputeShare(enabled) => self.set_compute_sharing(enabled).await,
+            Command::PairShow => self.show_pairing_code().await,
+            Command::PairWith { peer, code } => self.pair_with_peer(&peer, &code).await,
+            Command::Unpair { peer } => self.unpair(&peer).await,
+            Command::Run { what, arguments } => self.run_work(&what, &arguments).await,
+            Command::Jobs => self.describe_jobs().await,
             Command::Rename(name) => self.rename(&name).await,
             Command::Clear => Ok(CommandOutcome::Clear),
             Command::Status => Ok(CommandOutcome::Status {
@@ -870,6 +891,228 @@ impl Node {
     }
 
     // ── Shared compute ───────────────────────────────────────────────────────
+
+    /// `/compute` — what the whole network can run, and where.
+    async fn describe_compute(&self) -> Result<CommandOutcome> {
+        let capacity = self.orchestrator.capacity().await;
+        let devices = self.orchestrator.devices().await;
+
+        if capacity.nodes == 0 {
+            return Ok(CommandOutcome::warning(
+                "No device on this network is sharing its hardware.\n\
+                 Turn this one on with `/compute on`.",
+            ));
+        }
+
+        let mut lines = vec![format!(
+            "{} device(s) sharing · {} accelerator(s) · {} MB VRAM · {} threads · {} slot(s) free",
+            capacity.nodes,
+            capacity.accelerators,
+            capacity.total_vram_mb,
+            capacity.cpu_threads,
+            capacity.free_slots,
+        )];
+
+        for device in devices.iter().filter(|d| d.capabilities.enabled) {
+            let caps = &device.capabilities;
+            let gpu = match caps.accelerator() {
+                Some(gpu) => format!(" · {}", gpu.summary()),
+                None => String::new(),
+            };
+            lines.push(format!(
+                "  {} — {}/{} busy{gpu}",
+                device.display_name,
+                caps.running_jobs,
+                caps.max_concurrent_jobs.max(1),
+            ));
+
+            if !caps.models.is_empty() {
+                let names: Vec<&str> = caps.models.iter().map(|m| m.name.as_str()).collect();
+                lines.push(format!("      models: {}", names.join(", ")));
+            }
+            if !caps.tasks.is_empty() {
+                let names: Vec<&str> = caps.tasks.iter().map(|t| t.name.as_str()).collect();
+                lines.push(format!("      tasks:  {}", names.join(", ")));
+            }
+        }
+
+        Ok(CommandOutcome::info(lines.join("\n")))
+    }
+
+    /// `/compute on|off`
+    async fn set_compute_sharing(&self, enabled: bool) -> Result<CommandOutcome> {
+        self.compute.set_enabled(enabled).await;
+        self.persist_compute_settings(Some(enabled), None).await?;
+
+        Ok(CommandOutcome::success(if enabled {
+            "This device is now sharing its resources. \
+             Devices must still pair before they can use it — `/pair` shows a code."
+        } else {
+            "This device has stopped sharing its resources"
+        }))
+    }
+
+    /// `/pair` — a code for someone else to type.
+    async fn show_pairing_code(&self) -> Result<CommandOutcome> {
+        let code = self.compute.trust.begin_pairing().await;
+        let minutes = crate::compute::protocol::PAIRING_CODE_TTL_SECS / 60;
+
+        Ok(CommandOutcome::info(format!(
+            "Pairing code: {code}\n\
+             Type it on the other device within {minutes} minutes:\n\
+             \u{20}   /pair {} {code}",
+            self.identity().username,
+        )))
+    }
+
+    /// `/pair <peer> <code>` — earn the right to use another device.
+    async fn pair_with_peer(&self, peer: &str, code: &str) -> Result<CommandOutcome> {
+        let Some(peer) = self.registry.resolve(peer).await else {
+            return Ok(CommandOutcome::warning("no device matching that name"));
+        };
+
+        let Some(addr) = peer.compute_addr() else {
+            return Ok(CommandOutcome::warning(format!(
+                "{} is not offering its hardware",
+                peer.display_name()
+            )));
+        };
+
+        match self.compute.pair_with(addr, code).await {
+            Ok(token) => {
+                self.remember_pairing(&peer.node_id, &token).await?;
+                Ok(CommandOutcome::success(format!(
+                    "Paired with {}. Its hardware is now available to this device.",
+                    peer.display_name()
+                )))
+            }
+            Err(e) => Ok(CommandOutcome::error(format!("{e:#}"))),
+        }
+    }
+
+    /// `/unpair <peer>` — withdraw a device's access to this one.
+    async fn unpair(&self, peer: &str) -> Result<CommandOutcome> {
+        // Match on the trust store's own record rather than the peer registry:
+        // a device you want to revoke is quite possibly one that has gone
+        // away, and it must still be revocable when it is not on the network.
+        let trusted = self.compute.trust.list().await;
+        let needle = peer.to_ascii_lowercase();
+        let found = trusted.iter().find(|t| {
+            t.node_id.eq_ignore_ascii_case(peer)
+                || t.display_name.to_ascii_lowercase() == needle
+                || t.node_id.to_ascii_lowercase().starts_with(&needle)
+        });
+
+        let Some(target) = found else {
+            return Ok(CommandOutcome::warning("that device was not paired"));
+        };
+
+        let name = target.display_name.clone();
+        self.compute.trust.revoke(&target.node_id.clone()).await;
+        Ok(CommandOutcome::success(format!(
+            "{name} may no longer use this device"
+        )))
+    }
+
+    /// `/run <model or task> <prompt, or name=value pairs>`
+    async fn run_work(&self, what: &str, arguments: &str) -> Result<CommandOutcome> {
+        use crate::compute::{Priority, Work};
+
+        let capacity = self.orchestrator.capacity().await;
+        let is_model = capacity.models.iter().any(|m| m == what);
+        let is_task = capacity.tasks.iter().any(|t| t == what);
+
+        let work = match (is_model, is_task) {
+            (true, _) => {
+                if arguments.is_empty() {
+                    return Ok(CommandOutcome::warning(format!(
+                        "usage: /run {what} <prompt>"
+                    )));
+                }
+                Work::Inference {
+                    model: what.to_string(),
+                    prompt: arguments.to_string(),
+                    system: None,
+                    temperature: None,
+                }
+            }
+            (_, true) => Work::Task {
+                name: what.to_string(),
+                parameters: parse_parameters(arguments),
+                needs_gpu: false,
+            },
+            // Say what *is* available rather than only that this is not.
+            _ => {
+                let mut available = capacity.models.clone();
+                available.extend(capacity.tasks.clone());
+                return Ok(CommandOutcome::warning(if available.is_empty() {
+                    format!(
+                        "nothing on this network can run \"{what}\", because no device is \
+                         sharing its hardware yet"
+                    )
+                } else {
+                    format!(
+                        "nothing on this network can run \"{what}\". Available: {}",
+                        available.join(", ")
+                    )
+                }));
+            }
+        };
+
+        // Typed at a prompt means someone is waiting for the answer.
+        let plan = self.orchestrator.plan(&work, &[]).await;
+        let Some(best) = plan.first() else {
+            return Ok(CommandOutcome::warning(
+                "no device with free capacity can take that right now",
+            ));
+        };
+        let (worker, reason) = (best.display_name.clone(), best.reason.clone());
+
+        match self.submit_work(work, Priority::Interactive).await {
+            Ok(job_id) => Ok(CommandOutcome::success(format!(
+                "Queued for {worker} — {reason}\n\
+                 Follow it with `/jobs` (job {})",
+                &job_id[..8.min(job_id.len())]
+            ))),
+            Err(e) => Ok(CommandOutcome::error(format!("{e:#}"))),
+        }
+    }
+
+    /// `/jobs` — what is queued, running and recently finished.
+    async fn describe_jobs(&self) -> Result<CommandOutcome> {
+        let mine = self.orchestrator.jobs().await;
+        let here = self.compute.running_jobs().await;
+
+        if mine.is_empty() && here.is_empty() {
+            return Ok(CommandOutcome::info("No work has been run yet"));
+        }
+
+        let mut lines = Vec::new();
+
+        for job in here {
+            lines.push(format!(
+                "  {:<9} {} — running here for {}",
+                "here", job.kind, job.requester
+            ));
+        }
+
+        for job in mine.iter().take(12) {
+            let worker = job.worker_name.as_deref().unwrap_or("unplaced");
+            let state = format!("{:?}", job.state).to_lowercase();
+            let mut line = format!(
+                "  {state:<9} {} on {worker} · {}s",
+                job.work.label(),
+                job.duration_secs()
+            );
+            // The reason a job failed is the only part anyone reads twice.
+            if let Some(error) = &job.error {
+                line.push_str(&format!("\n            {error}"));
+            }
+            lines.push(line);
+        }
+
+        Ok(CommandOutcome::info(lines.join("\n")))
+    }
 
     /// Queue work for the network. The orchestrator decides where it runs.
     pub async fn submit_work(

@@ -101,7 +101,17 @@ Inside either dashboard:
 | `/alias <peer> <name>` | Nickname a device |
 | `/ping <peer>` | Measure round-trip time |
 | `/share on\|off` | Toggle resource sharing |
+| `/compute` | What the network can run, and where |
+| `/compute on\|off` | Share this device's hardware |
+| `/pair` | Show a code, so another device may use this one |
+| `/pair <peer> <code>` | Use another device's hardware |
+| `/run <model\|task> <text>` | Run work on whichever device suits it |
+| `/jobs` | Queued, running and finished work |
 | `/help` | Everything else |
+
+Each has a command-line equivalent, so a script or a cron job can use them
+without a dashboard: `bifrost compute`, `bifrost pair`, `bifrost submit`,
+`bifrost jobs`, `bifrost scan`.
 
 `<peer>` accepts a node id, an id prefix, a username or an alias — `/sendfile 550e report.pdf` works.
 
