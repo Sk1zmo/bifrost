@@ -28,6 +28,11 @@ pub enum GpuVendor {
 }
 
 impl GpuVendor {
+    // Only the platforms that enumerate adapters call this. On Android and
+    // iOS `platform_gpus` returns nothing, so it would be dead code there —
+    // and a warning on those targets is a warning in the app build, where it
+    // is noise rather than a finding.
+    #[cfg_attr(any(target_os = "android", target_os = "ios"), allow(dead_code))]
     fn detect(name: &str) -> Self {
         let n = name.to_ascii_lowercase();
         match () {

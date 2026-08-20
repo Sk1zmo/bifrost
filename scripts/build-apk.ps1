@@ -6,14 +6,20 @@
 # app, and builds a signed, installable APK. It downloads the Android SDK, NDK
 # and Gradle on first run (about 4 GB) and reuses them afterwards.
 #
+# It uses the SDK you already have -- ANDROID_HOME, ANDROID_SDK_ROOT, or
+# sdk.dir in clients/android/local.properties -- and puts Gradle and its cache
+# beside it, so the whole toolchain stays on one drive of your choosing rather
+# than filling the system drive. Override with -SdkRoot and -GradleRoot.
+#
 # The result lands in dist\bifrost-<version>-android.apk.
 
 [CmdletBinding()]
 param(
-    # Where the Android SDK lives, or should be installed.
-    [string]$SdkRoot = "$env:LOCALAPPDATA\Android\Sdk",
-    # Where Gradle lives, or should be installed.
-    [string]$GradleRoot = "$env:LOCALAPPDATA\gradle",
+    # Where the Android SDK lives, or should be installed. Empty means "work
+    # it out" -- see below.
+    [string]$SdkRoot = '',
+    # Where Gradle lives, or should be installed. Empty means "beside the SDK".
+    [string]$GradleRoot = '',
     # 'release' (smaller, signed with the debug key) or 'debug'.
     [ValidateSet('release', 'debug')]
     [string]$Variant = 'release',
@@ -41,12 +47,81 @@ function Invoke-Native {
     param([string]$Command, [string[]]$Arguments = @())
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    try { & $Command @Arguments; return $LASTEXITCODE }
+    try {
+        # `| Out-Host` matters: without it the command's stdout joins this
+        # function's output, so `$code` becomes an array of every line printed
+        # *plus* the exit code -- and `$code -ne 0` on an array filters rather
+        # than compares, yielding a non-empty array, which is truthy. A tool
+        # that succeeded while printing anything to stdout then reads as
+        # failed. Out-Host writes to the console and returns nothing.
+        & $Command @Arguments | Out-Host
+        return $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $previous }
+}
+
+# The same, but returning the output -- stderr included -- as plain strings.
+#
+# PowerShell 5.1 wraps a native command's stderr in ErrorRecords, which under
+# `$ErrorActionPreference = 'Stop'` abort the script. Tools that report on
+# stderr as a matter of course (java -XshowSettings, rustup) would otherwise
+# kill a build by succeeding.
+function Invoke-NativeCapture {
+    param([string]$Command, [string[]]$Arguments = @())
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Command @Arguments 2>&1 | ForEach-Object { "$_" } }
     finally { $ErrorActionPreference = $previous }
 }
 
 $root = Split-Path -Parent $PSScriptRoot
 $android = Join-Path $root 'clients\android'
+
+# Find the SDK the machine already has, rather than installing a second one.
+#
+# Downloading 3 GB onto a machine that already has the NDK -- because it lives
+# on another drive -- is a bad first impression, and the answer is usually
+# already written down in local.properties or an environment variable.
+if (-not $SdkRoot) {
+    $candidates = @(
+        $env:ANDROID_HOME,
+        $env:ANDROID_SDK_ROOT
+    )
+
+    $localProperties = Join-Path $android 'local.properties'
+    if (Test-Path $localProperties) {
+        foreach ($line in Get-Content $localProperties) {
+            if ($line -match '^\s*sdk\.dir\s*=\s*(.+?)\s*$') {
+                # Java properties escape backslashes; undo that.
+                $candidates += $Matches[1].Replace('\\', '\')
+            }
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path (Join-Path $candidate 'platforms'))) {
+            $SdkRoot = $candidate
+            break
+        }
+    }
+
+    if (-not $SdkRoot) { $SdkRoot = "$env:LOCALAPPDATA\Android\Sdk" }
+}
+
+# Keep Gradle and its caches beside the SDK, rather than on the system drive.
+#
+# Gradle's distribution is 130 MB and its cache grows past 2 GB, and the SDK
+# and NDK are several more. Defaulting all of it to %LOCALAPPDATA% fills C:
+# on a machine whose owner deliberately put the SDK on a data drive; following
+# the SDK puts the whole toolchain in one place, on a drive that evidently has
+# room for it.
+$toolRoot = Split-Path -Parent $SdkRoot
+if (-not $toolRoot) { $toolRoot = $SdkRoot }
+
+if (-not $GradleRoot) { $GradleRoot = Join-Path $toolRoot 'gradle' }
+if (-not $env:GRADLE_USER_HOME) {
+    $env:GRADLE_USER_HOME = Join-Path $toolRoot 'gradle-home'
+}
 
 Write-Host ''
 Write-Host '  Building Bifrost for Android' -ForegroundColor White
@@ -55,20 +130,44 @@ Write-Host ''
 # --- 1. JDK -----------------------------------------------------------------
 Step 'Checking the JDK'
 
-if (-not (Get-Command javac -ErrorAction SilentlyContinue)) {
+if (-not (Get-Command java -ErrorAction SilentlyContinue)) {
     Fail 'No JDK found. Install JDK 17 or newer, e.g. from https://adoptium.net'
 }
+
+# A real JDK home has the compiler and the runtime libraries under it.
+#
+# Deriving it from where `javac` sits on PATH does not work on Windows: Oracle
+# installs a shim directory (Common Files\Oracle\Java\javapath) full of
+# forwarding executables, so the parent of the parent is a directory with no
+# JDK in it at all -- and Gradle rejects it with "JAVA_HOME is set to an
+# invalid directory", after the Rust cross-compile has already run.
+function Test-JdkHome([string]$path) {
+    if (-not $path) { return $false }
+    (Test-Path (Join-Path $path 'bin\javac.exe')) -and (Test-Path (Join-Path $path 'lib'))
+}
+
 $javaHome = $env:JAVA_HOME
-if (-not $javaHome) {
-    # Derive it from javac's location: Gradle needs JAVA_HOME set explicitly.
-    $javacPath = (Get-Command javac).Source
-    $javaHome = Split-Path -Parent (Split-Path -Parent $javacPath)
+if (-not (Test-JdkHome $javaHome)) {
+    if ($javaHome) { Warn "Ignoring JAVA_HOME: no JDK at $javaHome" }
+
+    # Ask the runtime where it actually lives, rather than guessing from PATH.
+    $javaHome = $null
+    foreach ($line in (Invoke-NativeCapture 'java' @('-XshowSettings:properties', '-version'))) {
+        if ($line -match '^\s*java\.home\s*=\s*(.+?)\s*$') { $javaHome = $Matches[1]; break }
+    }
+
+    if (-not (Test-JdkHome $javaHome)) {
+        Fail "Found a Java runtime but not a JDK$(if ($javaHome) { " (at $javaHome)" }).`n" +
+             '       Install JDK 17 or newer from https://adoptium.net, or set JAVA_HOME.'
+    }
     $env:JAVA_HOME = $javaHome
 }
 Ok "JAVA_HOME = $javaHome"
 
 # --- 2. Android SDK ---------------------------------------------------------
 Step 'Checking the Android SDK'
+
+Ok "SDK at $SdkRoot"
 
 $sdkmanager = Join-Path $SdkRoot 'cmdline-tools\latest\bin\sdkmanager.bat'
 if (-not (Test-Path $sdkmanager)) {
@@ -147,7 +246,10 @@ if (-not $SkipNative) {
     )
 
     foreach ($abi in $abis) {
-        rustup target add $abi.Target 2>&1 | Out-Null
+        # Not `rustup ... 2>&1`: in PowerShell 5.1 that turns a native
+        # command's stderr into ErrorRecords, and rustup writes "up to date"
+        # there -- so a *successful* no-op aborted the whole build.
+        Invoke-Native 'rustup' @('target', 'add', $abi.Target) | Out-Null
 
         # Cargo reads the linker from a variable named after the target,
         # upper-cased with hyphens replaced by underscores.
@@ -192,7 +294,8 @@ if (-not (Test-Path $gradle)) {
     Expand-Archive -Path $zip -DestinationPath $GradleRoot -Force
     Remove-Item $zip -ErrorAction SilentlyContinue
 }
-Ok "Gradle $GradleVersion"
+Ok "Gradle $GradleVersion at $GradleRoot"
+Ok "Gradle cache at $env:GRADLE_USER_HOME"
 
 # --- 5. Build ---------------------------------------------------------------
 Step "Building the $Variant APK"

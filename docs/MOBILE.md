@@ -43,10 +43,38 @@ between the UI and the engine.
 That is the whole build. On first run it downloads the Android SDK, the NDK and
 Gradle (about 4 GB, once), cross-compiles the Rust core for `arm64-v8a` and
 `armeabi-v7a`, and produces a signed APK at
-`dist\bifrost-1.0.0-android.apk` (~14 MB).
+`dist\bifrost-1.0.0-android.apk` (~15 MB).
 
 The only prerequisites are a **JDK 17 or newer** and **Rust**. Everything else
 is fetched.
+
+### Where it puts 4 GB
+
+It uses the SDK you already have, looking at `ANDROID_HOME`,
+`ANDROID_SDK_ROOT` and `sdk.dir` in `clients\android\local.properties` before
+installing one of its own — and it puts **Gradle and its cache beside that
+SDK**, not on `%LOCALAPPDATA%`.
+
+That matters because the toolchain is large and grows: the SDK and NDK are
+several gigabytes, Gradle's distribution is 130 MB, and its cache passes 2 GB
+after a few builds. If you deliberately put the Android SDK on a data drive,
+the rest should follow it there rather than filling your system drive.
+
+The build prints exactly where each piece lives:
+
+```
+  [ok] SDK at F:/Android/Sdk
+  [ok] Gradle 8.11.1 at F:\Android\gradle
+  [ok] Gradle cache at F:\Android\gradle-home
+```
+
+Rust's build output is separate and follows `CARGO_TARGET_DIR`. Set it if your
+system drive is tight — and you must set it anyway if your checkout path
+contains a space, because MinGW's `dlltool` cannot handle one:
+
+```powershell
+$env:CARGO_TARGET_DIR = "F:\bifrost-build"
+```
 
 Useful switches:
 
@@ -54,6 +82,7 @@ Useful switches:
 .\scripts\build-apk.ps1 -Variant debug     # debug build
 .\scripts\build-apk.ps1 -SkipNative        # Kotlin only, reuse the .so
 .\scripts\build-apk.ps1 -SdkRoot D:\Android\Sdk
+.\scripts\build-apk.ps1 -GradleRoot D:\gradle
 ```
 
 ### Installing it

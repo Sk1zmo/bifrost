@@ -49,7 +49,13 @@ function Invoke-Native {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & $Command @Arguments
+        # `| Out-Host` matters: without it the command's stdout joins this
+        # function's output, so `$code` becomes an array of every line printed
+        # *plus* the exit code -- and `$code -ne 0` on an array filters rather
+        # than compares, yielding a non-empty array, which is truthy. A tool
+        # that succeeded while printing anything to stdout then reads as
+        # failed. Out-Host writes to the console and returns nothing.
+        & $Command @Arguments | Out-Host
         return $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous
