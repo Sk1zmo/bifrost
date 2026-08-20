@@ -90,7 +90,7 @@ impl TelemetryCollector {
         // only needs converting to a rate.
         let secs = SAMPLE_INTERVAL.as_secs_f64();
         let (mut rx_bytes, mut tx_bytes) = (0u64, 0u64);
-        for (_name, data) in self.networks.iter() {
+        for data in self.networks.values() {
             rx_bytes += data.received();
             tx_bytes += data.transmitted();
         }

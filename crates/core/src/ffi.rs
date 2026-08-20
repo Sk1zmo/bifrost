@@ -775,14 +775,48 @@ mod tests {
             "null"
         );
 
-        // Events buffered since start include the startup notice.
-        let events: serde_json::Value =
-            serde_json::from_str(&take(bifrost_poll_events()).unwrap()).unwrap();
-        assert!(events.is_array());
-        // Draining is destructive.
-        let drained: serde_json::Value =
-            serde_json::from_str(&take(bifrost_poll_events()).unwrap()).unwrap();
-        assert_eq!(drained.as_array().unwrap().len(), 0);
+        // Draining is destructive: an event delivered once is not delivered
+        // again. Asserting the second drain is *empty* would be a race, since
+        // the node keeps publishing telemetry every couple of seconds, so
+        // instead track one specific event across two drains.
+        let _ = take(bifrost_poll_events());
+        let marker = CString::new("ffi-drain-marker").unwrap();
+        assert_eq!(
+            unsafe { bifrost_send_chat(marker.as_ptr(), std::ptr::null()) },
+            0
+        );
+
+        let contains_marker = |json: &str| -> bool {
+            serde_json::from_str::<serde_json::Value>(json)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["data"]["content"] == "ffi-drain-marker")
+        };
+
+        // The buffer is filled by a background task draining the event bus, so
+        // the event has not necessarily landed the instant send_chat returns.
+        let mut delivered = false;
+        for _ in 0..40 {
+            if contains_marker(&take(bifrost_poll_events()).unwrap()) {
+                delivered = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(
+            delivered,
+            "the marker event should arrive within two seconds"
+        );
+
+        // Having been delivered, it must never come back.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let second = take(bifrost_poll_events()).unwrap();
+        assert!(
+            !contains_marker(&second),
+            "the second drain must not repeat it"
+        );
 
         // Sharing toggles without error.
         assert_eq!(bifrost_set_sharing(0), 0);
