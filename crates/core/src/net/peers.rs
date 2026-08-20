@@ -30,6 +30,9 @@ pub struct Peer {
     pub ports: PortSet,
     pub telemetry: Telemetry,
     pub shared: SharedResources,
+    /// What this peer will run for others.
+    #[serde(default)]
+    pub compute: crate::compute::protocol::Capabilities,
     pub first_seen: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
     pub online: bool,
@@ -127,6 +130,7 @@ impl PeerRegistry {
                 peer.ports = beacon.ports;
                 peer.telemetry = telemetry;
                 peer.shared = beacon.shared.clone();
+                peer.compute = beacon.compute.clone();
                 peer.last_seen = now;
                 peer.online = true;
                 peer.beacons_seen += 1;
@@ -157,6 +161,7 @@ impl PeerRegistry {
                         ports: beacon.ports,
                         telemetry,
                         shared: beacon.shared.clone(),
+                        compute: beacon.compute.clone(),
                         first_seen: now,
                         last_seen: now,
                         online: true,
@@ -415,6 +420,7 @@ mod tests {
             ports: PortSet::default(),
             telemetry: Telemetry::default(),
             shared: SharedResources::default(),
+            compute: Default::default(),
             timestamp: Utc::now(),
             cpu_usage: None,
             ram_available_mb: None,

@@ -34,6 +34,7 @@
 //! |---|---|
 //! | [`net`] | Wire protocol, framing, discovery, messaging, peer registry |
 //! | [`chat`] | Message history, command parsing, presence, voice |
+//! | [`compute`] | Shared compute: models, declared tasks, the orchestrator |
 //! | [`files`] | Chunked, checksummed file transfer |
 //! | [`resources`] | System metrics and resource advertisement |
 //! | [`store`] | On-disk chat log and key-value state |
@@ -49,6 +50,7 @@
 #![warn(missing_debug_implementations)]
 
 pub mod chat;
+pub mod compute;
 pub mod events;
 pub mod ffi;
 /// JNI entry points for the Android client. Android only; every other target

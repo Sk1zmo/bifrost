@@ -43,6 +43,7 @@ pub const DEFAULT_MESSAGING_PORT: u16 = 9002;
 pub const DEFAULT_FILE_PORT: u16 = 9003;
 pub const DEFAULT_VOICE_SIGNAL_PORT: u16 = 9004;
 pub const DEFAULT_VOICE_AUDIO_PORT: u16 = 9005;
+pub const DEFAULT_COMPUTE_PORT: u16 = 9006;
 
 /// Administratively-scoped IPv4 multicast group (RFC 2365) used alongside
 /// plain broadcast. Many consumer APs and virtually every enterprise AP drop
@@ -82,6 +83,13 @@ pub struct PortSet {
     pub files: u16,
     pub voice_signal: u16,
     pub voice_audio: u16,
+    /// Shared compute. Defaulted so a beacon from an older node still parses.
+    #[serde(default = "default_compute_port")]
+    pub compute: u16,
+}
+
+fn default_compute_port() -> u16 {
+    DEFAULT_COMPUTE_PORT
 }
 
 impl Default for PortSet {
@@ -93,6 +101,7 @@ impl Default for PortSet {
             files: DEFAULT_FILE_PORT,
             voice_signal: DEFAULT_VOICE_SIGNAL_PORT,
             voice_audio: DEFAULT_VOICE_AUDIO_PORT,
+            compute: DEFAULT_COMPUTE_PORT,
         }
     }
 }
@@ -114,6 +123,7 @@ impl PortSet {
             files: self.files + offset,
             voice_signal: self.voice_signal + offset,
             voice_audio: self.voice_audio + offset,
+            compute: self.compute + offset,
         }
     }
 }
@@ -208,6 +218,10 @@ pub struct Beacon {
     pub telemetry: Telemetry,
     #[serde(default)]
     pub shared: SharedResources,
+    /// What this node will run for others. Defaulted, so a node that predates
+    /// shared compute still parses as one that offers none.
+    #[serde(default)]
+    pub compute: crate::compute::protocol::Capabilities,
     pub timestamp: DateTime<Utc>,
 
     // ── v1 compatibility ──
@@ -458,6 +472,7 @@ mod tests {
 
         assert_eq!(p.web, 9010);
         assert_eq!(p.messaging, 9012);
+        assert_eq!(p.compute, 9016);
         assert_eq!(p.files, 9013);
         assert_eq!(p.voice_signal, 9014);
         assert_eq!(p.voice_audio, 9015);

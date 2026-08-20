@@ -46,6 +46,9 @@ pub struct BeaconSource {
     pub ports: PortSet,
     pub telemetry: watch::Receiver<Telemetry>,
     pub shared: watch::Receiver<SharedResources>,
+    /// What this node will run for others, refreshed as models and tasks
+    /// change so the network's view of capacity stays current.
+    pub compute: watch::Receiver<crate::compute::protocol::Capabilities>,
 }
 
 impl BeaconSource {
@@ -68,6 +71,7 @@ impl BeaconSource {
             ram_available_mb: Some(telemetry.ram_available_mb()),
             telemetry,
             shared: self.shared.borrow().clone(),
+            compute: self.compute.borrow().clone(),
             timestamp: Utc::now(),
         }
     }
@@ -320,6 +324,7 @@ mod tests {
             ports: PortSet::default(),
             telemetry: Telemetry::default(),
             shared: SharedResources::default(),
+            compute: Default::default(),
             timestamp: Utc::now(),
             cpu_usage: None,
             ram_available_mb: None,

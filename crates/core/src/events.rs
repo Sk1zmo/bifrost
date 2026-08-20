@@ -35,7 +35,10 @@ pub enum NodeEvent {
     /// A chat message was sent or received.
     Chat(ChatPayload),
     /// A peer was discovered, or came back online.
-    PeerOnline(Peer),
+    ///
+    /// Boxed: `Peer` now carries full compute capabilities, and an enum sized
+    /// to its largest variant is copied into every subscriber's queue.
+    PeerOnline(Box<Peer>),
     /// A peer stopped beaconing.
     PeerOffline {
         node_id: String,

@@ -257,6 +257,7 @@ fn allocate_ports(discovery: u16, taken: &[PortSet]) -> Option<PortSet> {
             files: 9003 + offset,
             voice_signal: 9004 + offset,
             voice_audio: 9005 + offset,
+            compute: 9006 + offset,
         };
 
         let clashes = taken.iter().any(|t| {

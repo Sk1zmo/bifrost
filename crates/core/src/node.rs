@@ -21,6 +21,9 @@ use crate::chat::commands::Command;
 use crate::chat::history::{compose, ChatStore};
 use crate::chat::presence::PresenceTracker;
 use crate::chat::voice::{CallSession, VoiceService};
+use crate::compute::orchestrator::Orchestrator;
+use crate::compute::protocol::Capabilities;
+use crate::compute::ComputeService;
 use crate::events::{EventBus, NodeEvent, NoticeLevel};
 use crate::files::transfer::{AcceptPolicy, TransferStatus, TransferStore};
 use crate::net::discovery::{self, BeaconSource};
@@ -172,9 +175,14 @@ pub struct Node {
     pub events: EventBus,
     pub store: DataStore,
     pub host: HostInfo,
+    /// Runs work for other machines, and asks them to run ours.
+    pub compute: ComputeService,
+    /// Pools the network's capacity and decides where work goes.
+    pub orchestrator: Orchestrator,
     ports: PortSet,
     telemetry_rx: watch::Receiver<Telemetry>,
     shared_rx: watch::Receiver<SharedResources>,
+    compute_rx: watch::Receiver<Capabilities>,
     identity_tx: Arc<watch::Sender<Identity>>,
     policy_tx: Arc<watch::Sender<SharingPolicy>>,
     config: Arc<RwLock<Config>>,
@@ -197,6 +205,26 @@ impl Node {
         let transfers = TransferStore::new(events.clone());
         let presence = PresenceTracker::new();
         let store = DataStore::open(&config.data_dir).await?;
+
+        let compute = ComputeService::new(
+            config.identity.node_id.clone(),
+            config.identity.username.clone(),
+            config.compute_require_pairing,
+            config.compute_max_jobs,
+            config.compute_enabled,
+            events.clone(),
+        );
+        compute
+            .tasks
+            .set(config.tasks.clone(), Some(config.data_dir.join("work")))
+            .await;
+
+        let orchestrator =
+            Orchestrator::new(config.identity.node_id.clone(), config.orchestrator_enabled);
+
+        // Capabilities are published on a watch channel so the beacon always
+        // carries the current picture without rebuilding it per broadcast.
+        let (compute_tx, compute_rx) = watch::channel(Capabilities::default());
 
         let (identity_tx, identity_rx) = watch::channel(config.identity.clone());
         let (policy_tx, policy_rx) = watch::channel(config.sharing_policy());
@@ -234,8 +262,11 @@ impl Node {
             store: store.clone(),
             host,
             ports,
+            compute: compute.clone(),
+            orchestrator: orchestrator.clone(),
             telemetry_rx: telemetry_rx.clone(),
             shared_rx: shared_rx.clone(),
+            compute_rx: compute_rx.clone(),
             identity_tx: Arc::new(identity_tx),
             policy_tx: Arc::new(policy_tx),
             config: Arc::new(RwLock::new(config)),
@@ -253,8 +284,9 @@ impl Node {
             let source = BeaconSource {
                 identity: node.identity_rx.clone(),
                 ports,
-                telemetry: telemetry_rx,
-                shared: shared_rx,
+                telemetry: telemetry_rx.clone(),
+                shared: shared_rx.clone(),
+                compute: compute_rx.clone(),
             };
             let registry = registry.clone();
             let shutdown = shutdown_tx.subscribe();
@@ -327,6 +359,48 @@ impl Node {
             });
         }
 
+        {
+            let bind = SocketAddr::new(any, ports.compute);
+            let compute = compute.clone();
+            let shutdown = shutdown_tx.subscribe();
+            tokio::spawn(async move {
+                if let Err(e) = compute.serve(bind, shutdown).await {
+                    tracing::error!(error = %format!("{e:#}"), "compute service stopped");
+                }
+            });
+        }
+
+        // Keep the advertised capabilities current, and keep the orchestrator's
+        // view of the network up to date. Models appear and disappear as the
+        // runtime pulls them, and peers come and go, so both are re-read
+        // rather than sampled once at startup.
+        {
+            let compute = compute.clone();
+            let orchestrator = orchestrator.clone();
+            let registry = registry.clone();
+            let telemetry = telemetry_rx.clone();
+            let mut shutdown = shutdown_tx.subscribe();
+
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(10));
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            let sample = telemetry.borrow().clone();
+                            let capabilities = compute
+                                .capabilities(sample.cpu_cores, sample.ram_available_mb())
+                                .await;
+
+                            orchestrator.set_local_capabilities(capabilities.clone()).await;
+                            orchestrator.observe_peers(&registry.list().await).await;
+                            let _ = compute_tx.send(capabilities);
+                        }
+                        _ = shutdown.recv() => return,
+                    }
+                }
+            });
+        }
+
         // Persist chat as it arrives, and keep presence fresh.
         {
             let store = store.clone();
@@ -386,6 +460,7 @@ impl Node {
             ports,
             telemetry: node.telemetry_rx.clone(),
             shared: node.shared_rx.clone(),
+            compute: node.compute_rx.clone(),
         };
         if let Err(e) = discovery::announce_once(&source).await {
             tracing::warn!(error = %format!("{e:#}"), "initial announcement failed");
@@ -659,6 +734,7 @@ impl Node {
             ports: self.ports,
             telemetry: self.telemetry_rx.clone(),
             shared: self.shared_rx.clone(),
+            compute: self.compute_rx.clone(),
         };
         let _ = discovery::announce_once(&source).await;
 

@@ -118,13 +118,14 @@ pub async fn run(config_path: &Path) -> Result<()> {
 
     // ── Ports ──
     println!("  Ports");
-    let port_checks: [(&str, u16, bool); 6] = [
+    let port_checks: [(&str, u16, bool); 7] = [
         ("discovery (UDP)", ports.discovery, false),
         ("chat (TCP)", ports.messaging, true),
         ("files (TCP)", ports.files, true),
         ("voice signal (TCP)", ports.voice_signal, true),
         ("voice audio (UDP)", ports.voice_audio, false),
         ("dashboard (TCP)", ports.web, true),
+        ("compute (TCP)", ports.compute, true),
     ];
 
     for (name, port, is_tcp) in port_checks {
@@ -429,7 +430,7 @@ foreach ($p in Get-NetConnectionProfile) {{
                  does not apply here.\n          \
                  Fix it by running install.ps1 as Administrator, or:\n          \
                  New-NetFirewallRule -DisplayName 'Bifrost TCP' -Direction Inbound \
-                 -Action Allow -Protocol TCP -LocalPort 9000,9002,9003,9004 -Program '{exe}'"
+                 -Action Allow -Protocol TCP -LocalPort 9000,9002,9003,9004,9006 -Program '{exe}'"
             ),
         );
     }
@@ -464,6 +465,7 @@ fn firewall_hint(ports: PortSet) -> String {
         voice_signal,
         voice_audio,
         web,
+        compute,
     } = ports;
 
     if cfg!(windows) {
@@ -472,7 +474,7 @@ fn firewall_hint(ports: PortSet) -> String {
              netsh advfirewall firewall add rule name=\"Bifrost\" dir=in action=allow \
              protocol=UDP localport={discovery},{voice_audio}\n    \
              netsh advfirewall firewall add rule name=\"Bifrost TCP\" dir=in action=allow \
-             protocol=TCP localport={messaging},{files},{voice_signal},{web}"
+             protocol=TCP localport={messaging},{files},{voice_signal},{web},{compute}"
         )
     } else if cfg!(target_os = "macos") {
         "macOS: System Settings → Network → Firewall → Options → allow incoming \
@@ -487,7 +489,7 @@ fn firewall_hint(ports: PortSet) -> String {
              Linux (firewalld):\n    \
              sudo firewall-cmd --add-port={discovery}/udp --add-port={voice_audio}/udp \
              --add-port={messaging}/tcp --add-port={files}/tcp \
-             --add-port={voice_signal}/tcp --add-port={web}/tcp --permanent \
+             --add-port={voice_signal}/tcp --add-port={web}/tcp              --add-port={compute}/tcp --permanent \
              && sudo firewall-cmd --reload"
         )
     }

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::compute::TaskDefinition;
 use crate::net::protocol::PortSet;
 use crate::resources::sharing::{SharingPolicy, DEFAULT_SHARE_FRACTION};
 use crate::util::identity::Identity;
@@ -45,6 +46,38 @@ pub struct Config {
     /// false restricts the dashboard to `127.0.0.1`.
     #[serde(default = "default_true")]
     pub web_lan_accessible: bool,
+
+    // ── Shared compute ──
+    /// Run work for other machines at all.
+    ///
+    /// Off by default. Chat and files are open to the LAN because they cost
+    /// nothing but bytes; compute spends someone's electricity, memory and
+    /// time, so it is opened deliberately.
+    #[serde(default)]
+    pub compute_enabled: bool,
+
+    /// Require a peer to pair before it may submit work.
+    ///
+    /// On by default whenever compute is enabled. Turning it off opens this
+    /// machine's declared tasks to anyone on the network.
+    #[serde(default = "default_true")]
+    pub compute_require_pairing: bool,
+
+    /// Jobs this node will run at once.
+    #[serde(default = "default_max_jobs")]
+    pub compute_max_jobs: usize,
+
+    /// Place work across the network, rather than only running it locally.
+    #[serde(default = "default_true")]
+    pub orchestrator_enabled: bool,
+
+    /// The tasks this machine will run for others.
+    ///
+    /// The template is the whole permission: a peer names one of these and
+    /// fills its placeholders, and can do nothing else. See
+    /// [`TaskDefinition`] for the shape.
+    #[serde(default)]
+    pub tasks: HashMap<String, TaskDefinition>,
 }
 
 fn default_true() -> bool {
@@ -53,6 +86,10 @@ fn default_true() -> bool {
 
 fn default_share_fraction() -> f32 {
     DEFAULT_SHARE_FRACTION
+}
+
+fn default_max_jobs() -> usize {
+    2
 }
 
 impl Config {
@@ -73,13 +110,35 @@ impl Config {
 
     /// A fresh config for this machine.
     pub fn generate() -> Self {
-        let base = Self::base_dir();
+        Self::generate_in(&Self::base_dir())
+    }
+
+    /// A fresh config whose directories live under `base`.
+    ///
+    /// The caller's chosen location is the anchor, not a global home
+    /// directory. Android and iOS have no home directory at all: `dirs`
+    /// returns nothing, `base_dir` falls back to `.`, and the working
+    /// directory on both is read-only — so a node generated the old way died
+    /// on first launch with "cannot create ./.bifrost/downloads: Read-only
+    /// file system". Deriving from wherever the config itself is going means
+    /// an app that passes its own private directory gets a config entirely
+    /// inside it.
+    pub fn generate_in(base: &Path) -> Self {
+        // Desktops have a real Downloads folder and a user who expects files
+        // to land there. Mobile has app-private storage and nothing else
+        // writable without extra permissions, so the base wins.
+        let download_dir = if cfg!(any(target_os = "android", target_os = "ios")) {
+            base.join("downloads")
+        } else {
+            dirs::download_dir()
+                .map(|d| d.join("Bifrost"))
+                .unwrap_or_else(|| base.join("downloads"))
+        };
+
         Self {
             identity: Identity::generate(),
             ports: PortSet::default(),
-            download_dir: dirs::download_dir()
-                .map(|d| d.join("Bifrost"))
-                .unwrap_or_else(|| base.join("downloads")),
+            download_dir,
             data_dir: base.join("data"),
             aliases: HashMap::new(),
             sharing_enabled: true,
@@ -88,6 +147,11 @@ impl Config {
             max_incoming_file_bytes: None,
             web_enabled: true,
             web_lan_accessible: true,
+            compute_enabled: false,
+            compute_require_pairing: true,
+            compute_max_jobs: default_max_jobs(),
+            orchestrator_enabled: true,
+            tasks: HashMap::new(),
         }
     }
 
@@ -96,8 +160,12 @@ impl Config {
     /// A config that exists but cannot be parsed is moved aside rather than
     /// overwritten, so a hand-edit with a stray comma is recoverable.
     pub fn load_or_create(path: &Path) -> Result<Self> {
+        // Whoever chose where the config lives has also chosen where its data
+        // belongs — on mobile that is the only writable place there is.
+        let base = path.parent().unwrap_or_else(|| Path::new("."));
+
         if !path.exists() {
-            let config = Self::generate();
+            let config = Self::generate_in(base);
             config.save(path)?;
             tracing::info!(
                 path = %path.display(),
@@ -123,7 +191,7 @@ impl Config {
                     backup = %backup.display(),
                     "config unreadable; kept a copy and generated a new identity"
                 );
-                let config = Self::generate();
+                let config = Self::generate_in(base);
                 config.save(path)?;
                 Ok(config)
             }
@@ -242,6 +310,41 @@ mod tests {
         assert_eq!(
             reloaded.aliases.get("peer-1").map(String::as_str),
             Some("Studio Mac")
+        );
+    }
+
+    #[test]
+    fn a_generated_config_keeps_its_data_beside_itself() {
+        // The failure this guards against: on Android there is no home
+        // directory, so a config anchored to one lands on a read-only path and
+        // the node dies on first launch.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("config.json");
+
+        let config = Config::load_or_create(&path).unwrap();
+
+        assert!(
+            config.data_dir.starts_with(dir.path()),
+            "data_dir {} escaped the config's own directory",
+            config.data_dir.display()
+        );
+        // The directories must actually be creatable there.
+        config.ensure_dirs().unwrap();
+        assert!(config.data_dir.exists());
+    }
+
+    #[test]
+    fn generate_in_anchors_everything_to_the_given_base() {
+        let base = std::path::Path::new("/somewhere/private");
+        let config = Config::generate_in(base);
+
+        assert_eq!(config.data_dir, base.join("data"));
+        // Downloads may legitimately point at the desktop Downloads folder,
+        // but must never fall back to a bare relative path.
+        assert!(
+            config.download_dir.is_absolute(),
+            "download_dir {} is relative, which is read-only on mobile",
+            config.download_dir.display()
         );
     }
 
