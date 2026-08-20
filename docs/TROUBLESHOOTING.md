@@ -128,12 +128,77 @@ If a file with that name already existed, yours arrived as `report (1).pdf`.
 
 ## The dashboard
 
-### It will not load from my phone
+### The phone just hangs, loading forever
+
+**On Windows this is nearly always the firewall, and the symptom is diagnostic.**
+
+A blocked port *hangs*; a closed port *fails instantly*. Windows Firewall drops
+an inbound connection rather than refusing it, so the phone gets no response at
+all and the browser waits until it times out. If you saw a quick "cannot
+connect" instead, the problem is something else.
+
+The reason it is confusing is that everything looks fine from the machine
+itself — `curl http://localhost:9000` and even `curl http://192.168.1.24:9000`
+both work, because loopback never touches the firewall.
+
+Run this first; it now checks exactly this:
+
+```sh
+bifrost doctor
+```
+
+Two things have to be true, and both are easy to miss:
+
+**1. There is a rule for *this exact binary*.** Windows Firewall matches on
+program path. A rule for `bifrost.exe` in a different folder — an older build,
+another checkout — does nothing for the one you are running. Windows may also
+have auto-created rules when you first clicked "Allow access", pointing at
+whatever binary was running at the time.
+
+```powershell
+# See what rules exist and which program each covers
+Get-NetFirewallRule -DisplayName "*ifrost*" | ForEach-Object {
+    "{0} -> {1}" -f $_.DisplayName, ($_ | Get-NetFirewallApplicationFilter).Program
+}
+```
+
+**2. The rule covers the profile your network is actually on.** Windows files a
+great many home networks as **Public**, and a rule scoped to Private then never
+applies.
+
+```powershell
+Get-NetConnectionProfile | Select-Object InterfaceAlias, NetworkCategory
+```
+
+If your Wi-Fi says `Public`, either mark it Private — correct for a home or
+office network, and it usually has a much less restrictive firewall profile —
+
+```powershell
+# as Administrator
+Set-NetConnectionProfile -InterfaceAlias 'Wi-Fi' -NetworkCategory Private
+```
+
+or add rules covering every profile:
+
+```powershell
+# as Administrator
+$exe = "$env:LOCALAPPDATA\Programs\Bifrost\bifrost.exe"
+Remove-NetFirewallRule -DisplayName 'Bifrost*' -ErrorAction SilentlyContinue
+New-NetFirewallRule -DisplayName 'Bifrost TCP' -Direction Inbound -Action Allow `
+    -Protocol TCP -LocalPort 9000,9002,9003,9004 -Profile Any -Program $exe
+New-NetFirewallRule -DisplayName 'Bifrost UDP' -Direction Inbound -Action Allow `
+    -Protocol UDP -LocalPort 9001,9005 -Profile Any -Program $exe
+```
+
+`install.ps1 -AllProfiles`, run as Administrator, does the same thing.
+
+### It will not load from my phone (other causes)
 
 - Use the address Bifrost printed, not `localhost` — `localhost` on your phone means your phone.
 - Confirm the phone is on the same Wi-Fi, not mobile data.
-- Check that port 9000 is open in the firewall.
+- Turn off any VPN **on the phone** — a full-tunnel VPN routes even LAN addresses away.
 - If `web_lan_accessible` is `false` in the config, the dashboard is bound to `127.0.0.1` and is deliberately unreachable from anywhere else.
+- Router client isolation blocks it regardless of any firewall; see the top of this document.
 
 ### It loads but shows nothing
 

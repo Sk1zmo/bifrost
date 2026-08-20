@@ -18,7 +18,10 @@ param(
     [string]$Repo = 'https://github.com/Sk1zmo/bifrost',
     [string]$Branch = 'main',
     # Skip the firewall step even when running elevated.
-    [switch]$NoFirewall
+    [switch]$NoFirewall,
+    # Allow inbound on Public networks too. Needed when Windows has filed your
+    # home Wi-Fi as Public, which it does more often than not.
+    [switch]$AllProfiles
 )
 
 $ErrorActionPreference = 'Stop'
@@ -245,21 +248,57 @@ if ($NoFirewall) {
     Write-Host  '      netsh advfirewall firewall add rule name="Bifrost UDP" dir=in action=allow protocol=UDP localport=9001,9005'
     Write-Host  '      netsh advfirewall firewall add rule name="Bifrost TCP" dir=in action=allow protocol=TCP localport=9000,9002,9003,9004'
 } else {
+    # Windows Firewall matches on program path, so the rule has to name the
+    # binary we just installed. A rule left from a different build elsewhere
+    # does nothing for this one.
+    $program = Join-Path $Prefix 'bifrost.exe'
+
+    # Which profiles to cover. Private and Domain are the safe default: a LAN
+    # tool has no business accepting connections on a coffee-shop network.
+    # But Windows files a great many home networks as Public, and a
+    # Private-only rule then never applies -- the node runs, the dashboard
+    # answers on localhost, and a phone's browser hangs forever with no error
+    # because the inbound SYN is dropped rather than refused.
+    $publicNetworks = @()
+    try {
+        $publicNetworks = @(Get-NetConnectionProfile |
+            Where-Object { $_.NetworkCategory -eq 'Public' } |
+            Where-Object { (Get-NetFirewallProfile -Name Public).Enabled -eq 'True' })
+    } catch {
+        # Older builds without the NetConnection cmdlets; carry on.
+    }
+
+    $profiles = if ($AllProfiles) { 'Any' } else { 'Private,Domain' }
+
     try {
         # Remove any rule from a previous install so re-running does not stack
         # duplicates in the firewall list.
         Remove-NetFirewallRule -DisplayName 'Bifrost*' -ErrorAction SilentlyContinue
 
         New-NetFirewallRule -DisplayName 'Bifrost UDP' -Direction Inbound -Action Allow `
-            -Protocol UDP -LocalPort 9001,9005 -Profile Private,Domain `
-            -Program (Join-Path $Prefix 'bifrost.exe') | Out-Null
+            -Protocol UDP -LocalPort 9001,9005 -Profile $profiles `
+            -Program $program | Out-Null
         New-NetFirewallRule -DisplayName 'Bifrost TCP' -Direction Inbound -Action Allow `
-            -Protocol TCP -LocalPort 9000,9002,9003,9004 -Profile Private,Domain `
-            -Program (Join-Path $Prefix 'bifrost.exe') | Out-Null
+            -Protocol TCP -LocalPort 9000,9002,9003,9004 -Profile $profiles `
+            -Program $program | Out-Null
 
-        # Private and Domain only: a LAN tool has no business accepting
-        # connections on a public coffee-shop network.
-        Write-Ok 'Firewall rules added for private and domain networks'
+        Write-Ok "Firewall rules added for: $profiles"
+
+        if ($publicNetworks.Count -gt 0 -and -not $AllProfiles) {
+            $names = ($publicNetworks | ForEach-Object { $_.InterfaceAlias }) -join ', '
+            Write-Host ''
+            Write-Warn "Windows has filed your active network as Public: $names"
+            Write-Host '       The rules just added do NOT cover Public, so other devices'
+            Write-Host '       will not reach this node. Pick one:'
+            Write-Host ''
+            Write-Host '       1. Mark it Private (correct for a home or office network):' -ForegroundColor Yellow
+            foreach ($p in $publicNetworks) {
+                Write-Host "          Set-NetConnectionProfile -InterfaceAlias '$($p.InterfaceAlias)' -NetworkCategory Private"
+            }
+            Write-Host ''
+            Write-Host '       2. Or re-run this installer with -AllProfiles.' -ForegroundColor Yellow
+            Write-Host ''
+        }
     } catch {
         Write-Warn "Could not add firewall rules: $_"
     }

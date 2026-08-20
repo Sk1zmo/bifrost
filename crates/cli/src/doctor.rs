@@ -141,8 +141,15 @@ pub async fn run(config_path: &Path) -> Result<()> {
     verdicts.push(probe);
     println!();
 
-    // ── Firewall guidance ──
+    // ── Firewall ──
     println!("  Firewall");
+    #[cfg(windows)]
+    {
+        let verdict = check_windows_firewall().await;
+        verdict.print("inbound rules");
+        verdicts.push(verdict);
+        println!();
+    }
     println!("  {}", firewall_hint(ports));
     println!();
 
@@ -321,6 +328,132 @@ async fn probe_broadcast(ports: PortSet) -> Verdict {
                 .into(),
         )
     }
+}
+
+/// Does Windows Firewall actually let other devices reach *this* executable?
+///
+/// This is the check that catches the most confusing failure Bifrost has. The
+/// symptom is a phone whose browser hangs forever on the dashboard address
+/// while `curl` from the same machine works perfectly, because loopback never
+/// touches the firewall. A dropped inbound SYN produces no response at all,
+/// so the browser waits instead of failing.
+///
+/// Two things have to hold, and both are easy to get wrong:
+///
+///  * there is an enabled inbound Allow rule for **this exact binary** —
+///    Windows Firewall matches on program path, so a rule left over from a
+///    different build, or from a copy in another folder, does nothing here
+///  * that rule covers the profile the *active network* is using — Windows
+///    routinely files a home Wi-Fi under Public, and a Private-only rule then
+///    never applies
+#[cfg(windows)]
+async fn check_windows_firewall() -> Verdict {
+    let Ok(exe) = std::env::current_exe() else {
+        return Verdict::Warn(
+            "cannot determine this executable's path".into(),
+            "Skipping the firewall check.".into(),
+        );
+    };
+    let exe = exe.display().to_string();
+
+    // Query by application filter rather than enumerating every rule.
+    // `Get-NetFirewallRule | Where-Object { Get-NetFirewallApplicationFilter }`
+    // reads plausibly but is quadratic in practice: a typical Windows install
+    // has thousands of inbound rules and each filter lookup is its own COM
+    // round trip, which takes minutes. Filtering at the source is instant.
+    let script = format!(
+        r#"$ErrorActionPreference = 'SilentlyContinue'
+$exe = '{}'
+$allowed = @(Get-NetFirewallApplicationFilter -Program $exe |
+    Get-NetFirewallRule |
+    Where-Object {{ $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Enabled -eq 'True' }})
+$profiles = ($allowed | ForEach-Object {{ $_.Profile }} | Sort-Object -Unique) -join ','
+"RULES`t$($allowed.Count)`t$profiles"
+foreach ($p in Get-NetConnectionProfile) {{
+    $on = (Get-NetFirewallProfile -Name $p.NetworkCategory).Enabled
+    "NET`t$($p.InterfaceAlias)`t$($p.NetworkCategory)`t$on"
+}}"#,
+        exe.replace('\'', "''")
+    );
+
+    // A diagnostic that hangs is worse than one that gives up, so the child
+    // process is bounded.
+    let child = tokio::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output();
+
+    let output = match tokio::time::timeout(Duration::from_secs(20), child).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(_)) => {
+            return Verdict::Warn(
+                "could not query Windows Firewall".into(),
+                "Check the rules by hand with: wf.msc".into(),
+            )
+        }
+        Err(_) => {
+            return Verdict::Warn(
+                "the firewall query timed out".into(),
+                "Check the rules by hand with: wf.msc".into(),
+            )
+        }
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut rule_count = 0usize;
+    let mut rule_profiles = String::new();
+    let mut public_networks = Vec::new();
+
+    for line in text.lines() {
+        let fields: Vec<&str> = line.trim().split('\t').collect();
+        match fields.as_slice() {
+            ["RULES", count, profiles] => {
+                rule_count = count.parse().unwrap_or(0);
+                rule_profiles = profiles.to_string();
+            }
+            // A firewall profile that is switched off filters nothing, so a
+            // network on it is reachable regardless of the rules.
+            ["NET", alias, category, enabled] if *category == "Public" && *enabled == "True" => {
+                public_networks.push(alias.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    if rule_count == 0 {
+        return Verdict::Fail(
+            "no inbound rule for this executable".into(),
+            format!(
+                "Other devices cannot reach this node; their connections are dropped \
+                 silently, so a phone's browser just hangs. Note that Windows Firewall \
+                 matches on program path, so a rule for a copy of bifrost.exe elsewhere \
+                 does not apply here.\n          \
+                 Fix it by running install.ps1 as Administrator, or:\n          \
+                 New-NetFirewallRule -DisplayName 'Bifrost TCP' -Direction Inbound \
+                 -Action Allow -Protocol TCP -LocalPort 9000,9002,9003,9004 -Program '{exe}'"
+            ),
+        );
+    }
+
+    // A rule exists, but it may not cover the network actually in use. The
+    // Profile property reads "Any", or a comma-separated list.
+    let covers_public = rule_profiles.contains("Any") || rule_profiles.contains("Public");
+    if !public_networks.is_empty() && !covers_public {
+        return Verdict::Fail(
+            format!("rules do not cover {}", public_networks.join(", ")),
+            format!(
+                "Windows has filed that network as Public, and this node's rules only \
+                 cover {rule_profiles}. Either mark it Private, which is correct for a \
+                 home or office network:\n          \
+                 Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private\n          \
+                 or re-run install.ps1 -AllProfiles as Administrator.",
+                public_networks[0]
+            ),
+        );
+    }
+
+    Verdict::Pass(format!(
+        "{rule_count} rule(s) for this binary ({rule_profiles})"
+    ))
 }
 
 fn firewall_hint(ports: PortSet) -> String {
