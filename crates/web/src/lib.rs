@@ -23,13 +23,17 @@
 //! (`web_lan_accessible`) that can be turned off to restrict the dashboard to
 //! localhost.
 
+pub mod companion;
+
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::body::Bytes;
+use axum::extract::FromRef;
 use axum::extract::{Path as RoutePath, Query, State};
+use axum::http::HeaderMap as RequestHeaders;
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -37,8 +41,60 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use bifrost_core::events::NodeEvent;
 use bifrost_core::Node;
+
+use crate::companion::CompanionManager;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
+
+/// What every handler is given: this machine's own node, plus the companion
+/// devices it is hosting on behalf of phones.
+#[derive(Clone, Debug)]
+pub struct AppState {
+    pub host: Node,
+    pub companions: CompanionManager,
+}
+
+impl FromRef<AppState> for Node {
+    fn from_ref(state: &AppState) -> Self {
+        state.host.clone()
+    }
+}
+
+impl AppState {
+    pub fn new(host: Node) -> Self {
+        Self {
+            host,
+            companions: CompanionManager::new(),
+        }
+    }
+
+    /// Resolve which node a request acts on.
+    ///
+    /// `?as=<companion-id>` selects a phone's own device; anything else falls
+    /// back to this machine's node. One place decides, so every endpoint
+    /// behaves identically whether it is driven from the laptop or the phone.
+    async fn node_for(&self, as_device: Option<&str>) -> Result<Node, ApiError> {
+        match as_device.filter(|id| !id.is_empty()) {
+            Some(id) => self.companions.node(id).await.ok_or_else(|| {
+                // The browser holds an id we no longer have — it was pruned,
+                // or the host restarted. Say so precisely so the page can
+                // re-claim rather than silently acting as the laptop.
+                ApiError {
+                    status: StatusCode::GONE,
+                    message: "this device is no longer registered; reload to rejoin".into(),
+                }
+            }),
+            None => Ok(self.host.clone()),
+        }
+    }
+}
+
+/// `?as=<companion-id>` on any endpoint.
+#[derive(Debug, Default, Deserialize)]
+pub struct AsDevice {
+    #[serde(default, rename = "as")]
+    pub as_device: Option<String>,
+}
 
 /// The dashboard, compiled in so the binary is self-contained.
 const DASHBOARD_HTML: &str = include_str!("../assets/dashboard.html");
@@ -51,6 +107,12 @@ const MAX_UPLOAD_BYTES: usize = 2 * 1024 * 1024 * 1024;
 
 /// Build the router.
 pub fn router(node: Node) -> Router {
+    router_with_state(AppState::new(node))
+}
+
+/// Build the router over an existing state, so the caller can keep hold of the
+/// companion manager (to prune it, or shut it down cleanly).
+pub fn router_with_state(state: AppState) -> Router {
     Router::new()
         .route("/", get(dashboard))
         .route("/manifest.webmanifest", get(manifest))
@@ -70,7 +132,10 @@ pub fn router(node: Node) -> Router {
         .route("/api/download/:filename", get(serve_download))
         .route("/api/voice/frame", post(voice_send))
         .route("/api/voice/frames", get(voice_receive))
-        .with_state(node)
+        // Companion devices: a phone claiming its own place on the network.
+        .route("/api/companion", get(list_companions).post(claim_companion))
+        .route("/api/companion/leave", post(release_companion))
+        .with_state(state)
 }
 
 /// Serve the dashboard until `shutdown` fires.
@@ -85,13 +150,34 @@ pub async fn serve(
 
     tracing::info!(%bind, "web dashboard listening");
 
-    axum::serve(listener, router(node))
+    let state = AppState::new(node);
+
+    // Retire companions whose browser has stopped polling, so a phone that
+    // was closed days ago is not still advertised to the network.
+    {
+        let companions = state.companions.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(300));
+            loop {
+                ticker.tick().await;
+                companions.prune_idle().await;
+            }
+        });
+    }
+
+    let companions = state.companions.clone();
+    let result = axum::serve(listener, router_with_state(state))
         .with_graceful_shutdown(async move {
             let _ = shutdown.recv().await;
             tracing::info!("web dashboard shutting down");
         })
         .await
-        .context("the dashboard server stopped")
+        .context("the dashboard server stopped");
+
+    // Take every companion off the network rather than leaving peers to time
+    // out devices that are definitely gone.
+    companions.shutdown_all().await;
+    result
 }
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
@@ -157,7 +243,8 @@ async fn manifest() -> impl IntoResponse {
 }
 
 /// Liveness probe, also used by `bifrost doctor` to find running nodes.
-async fn health(State(node): State<Node>) -> impl IntoResponse {
+async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    let node = state.host;
     Json(serde_json::json!({
         "status": "ok",
         "node_id": node.node_id(),
@@ -169,15 +256,27 @@ async fn health(State(node): State<Node>) -> impl IntoResponse {
 
 // ─── Reading state ───────────────────────────────────────────────────────────
 
-async fn snapshot(State(node): State<Node>) -> impl IntoResponse {
-    Json(node.snapshot().await)
+async fn snapshot(
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
+) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
+    Ok(Json(node.snapshot().await))
 }
 
 /// Live event stream.
 async fn events(
-    State(node): State<Node>,
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
 ) -> Sse<impl futures_util::Stream<Item = Result<Event, std::convert::Infallible>>> {
     use futures_util::StreamExt;
+
+    // An unknown id falls back to the host rather than failing: SSE has no
+    // good way to report an error, and the next API call will say so clearly.
+    let node = match state.node_for(as_device.as_device.as_deref()).await {
+        Ok(node) => node,
+        Err(_) => state.host.clone(),
+    };
 
     let stream = tokio_stream::wrappers::BroadcastStream::new(node.subscribe()).filter_map(
         |event| async move {
@@ -217,9 +316,11 @@ struct CommandBody {
 
 /// Run a command line, exactly as the terminal dashboard would.
 async fn command(
-    State(node): State<Node>,
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
     Json(body): Json<CommandBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     match node.execute_line(&body.line).await {
         Ok(Some(outcome)) => Ok(Json(serde_json::json!({
             "outcome": outcome,
@@ -238,9 +339,11 @@ struct ChatBody {
 }
 
 async fn chat(
-    State(node): State<Node>,
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
     Json(body): Json<ChatBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     if body.content.trim().is_empty() {
         return Err(ApiError::bad_request("a message cannot be empty"));
     }
@@ -262,9 +365,11 @@ struct AliasBody {
 }
 
 async fn alias(
-    State(node): State<Node>,
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
     Json(body): Json<AliasBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     let outcome = node
         .set_alias(&body.peer, body.alias)
         .await
@@ -278,9 +383,11 @@ struct SharingBody {
 }
 
 async fn sharing(
-    State(node): State<Node>,
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
     Json(body): Json<SharingBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     let outcome = node
         .set_sharing(body.enabled)
         .await
@@ -294,9 +401,11 @@ struct RenameBody {
 }
 
 async fn rename(
-    State(node): State<Node>,
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
     Json(body): Json<RenameBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     let outcome = node
         .rename(&body.username)
         .await
@@ -310,9 +419,11 @@ struct PeerBody {
 }
 
 async fn call(
-    State(node): State<Node>,
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
     Json(body): Json<PeerBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     let outcome = node
         .call(&body.peer)
         .await
@@ -330,9 +441,11 @@ struct HangupBody {
 }
 
 async fn hangup(
-    State(node): State<Node>,
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
     Json(body): Json<HangupBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     let outcome = node
         .hang_up(body.session.as_deref())
         .await
@@ -341,14 +454,89 @@ async fn hangup(
 }
 
 async fn ping(
-    State(node): State<Node>,
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
     Json(body): Json<PeerBody>,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     let outcome = node
         .ping(&body.peer)
         .await
         .map_err(|e| ApiError::internal(format!("{e:#}")))?;
     Ok(Json(serde_json::json!({ "text": outcome.as_text() })))
+}
+
+// ─── Companion devices ───────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ClaimBody {
+    /// What the device should be called on the network.
+    #[serde(default)]
+    name: Option<String>,
+    /// An id from a previous visit, so a returning phone keeps its identity —
+    /// and the aliases other machines gave it.
+    #[serde(default)]
+    id: Option<String>,
+}
+
+/// Register the caller's browser as a device on the network.
+///
+/// This is what turns "my phone shows my laptop's dashboard" into "my phone is
+/// on the network": the host starts a real node for it, and from then on the
+/// page passes `?as=<id>` and every action is that device's own.
+async fn claim_companion(
+    State(state): State<AppState>,
+    headers: RequestHeaders,
+    Json(body): Json<ClaimBody>,
+) -> ApiResult<impl IntoResponse> {
+    let user_agent = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+
+    let name = body
+        .name
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| companion::default_name_from_user_agent(user_agent));
+
+    if name.chars().count() > 64 {
+        return Err(ApiError::bad_request("that name is too long"));
+    }
+
+    let device_type = companion::device_type_from_user_agent(user_agent);
+
+    let info = state
+        .companions
+        .claim(&state.host, body.id, &name, device_type)
+        .await
+        .map_err(|e| ApiError::internal(format!("{e:#}")))?;
+
+    Ok(Json(info))
+}
+
+/// Every companion this host is running, for the laptop's settings page.
+async fn list_companions(State(state): State<AppState>) -> impl IntoResponse {
+    Json(state.companions.list().await)
+}
+
+#[derive(Deserialize)]
+struct LeaveBody {
+    id: String,
+}
+
+/// Take a companion off the network.
+async fn release_companion(
+    State(state): State<AppState>,
+    Json(body): Json<LeaveBody>,
+) -> ApiResult<impl IntoResponse> {
+    if state.companions.release(&body.id).await {
+        Ok(Json(
+            serde_json::json!({ "text": "Device removed from the network" }),
+        ))
+    } else {
+        Err(ApiError::not_found("no such device"))
+    }
 }
 
 // ─── Files ───────────────────────────────────────────────────────────────────
@@ -357,6 +545,8 @@ async fn ping(
 struct UploadQuery {
     peer: String,
     name: String,
+    #[serde(default, rename = "as")]
+    as_device: Option<String>,
 }
 
 /// Accept a file from the browser and forward it to a peer.
@@ -365,10 +555,11 @@ struct UploadQuery {
 /// `File` object directly, and it avoids a multipart parser dependency for a
 /// form that only ever has one field.
 async fn upload(
-    State(node): State<Node>,
+    State(state): State<AppState>,
     Query(query): Query<UploadQuery>,
     body: Bytes,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(query.as_device.as_deref()).await?;
     if body.is_empty() {
         return Err(ApiError::bad_request("the uploaded file was empty"));
     }
@@ -437,7 +628,11 @@ struct DownloadEntry {
 }
 
 /// List files this node has received, so a phone can pull them down.
-async fn list_downloads(State(node): State<Node>) -> ApiResult<impl IntoResponse> {
+async fn list_downloads(
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
+) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     let dir = node.download_dir().await;
     let mut entries = Vec::new();
 
@@ -478,9 +673,11 @@ async fn list_downloads(State(node): State<Node>) -> ApiResult<impl IntoResponse
 
 /// Serve one received file.
 async fn serve_download(
-    State(node): State<Node>,
+    State(state): State<AppState>,
     RoutePath(filename): RoutePath<String>,
+    Query(as_device): Query<AsDevice>,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
     let dir = node.download_dir().await;
     let path =
         resolve_within(&dir, &filename).ok_or_else(|| ApiError::bad_request("invalid filename"))?;
@@ -536,6 +733,8 @@ fn resolve_within(dir: &Path, filename: &str) -> Option<PathBuf> {
 #[derive(Deserialize)]
 struct VoiceQuery {
     session: String,
+    #[serde(default, rename = "as")]
+    as_device: Option<String>,
 }
 
 /// Forward one captured audio frame from the browser to the call's peer.
@@ -543,10 +742,11 @@ struct VoiceQuery {
 /// The body is raw signed 16-bit little-endian mono PCM at 16 kHz, which is
 /// what `getUserMedia` plus an `AudioWorklet` produces after downsampling.
 async fn voice_send(
-    State(node): State<Node>,
+    State(state): State<AppState>,
     Query(query): Query<VoiceQuery>,
     body: Bytes,
 ) -> ApiResult<impl IntoResponse> {
+    let node = state.node_for(query.as_device.as_deref()).await?;
     if body.is_empty() {
         return Err(ApiError::bad_request("no audio data"));
     }
@@ -565,10 +765,12 @@ async fn voice_send(
 
 /// Drain received audio for a call, as base64 frames the browser can play.
 async fn voice_receive(
-    State(node): State<Node>,
+    State(state): State<AppState>,
     Query(query): Query<VoiceQuery>,
-) -> impl IntoResponse {
+) -> ApiResult<impl IntoResponse> {
     use base64::Engine as _;
+
+    let node = state.node_for(query.as_device.as_deref()).await?;
 
     let frames: Vec<String> = node
         .voice
@@ -578,10 +780,10 @@ async fn voice_receive(
         .map(|f| base64::engine::general_purpose::STANDARD.encode(f))
         .collect();
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "sample_rate": bifrost_core::net::protocol::AUDIO_SAMPLE_RATE,
         "frames": frames,
-    }))
+    })))
 }
 
 #[cfg(test)]

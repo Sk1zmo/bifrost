@@ -176,6 +176,67 @@ bifrost qr
 
 Open your phone's camera app, point it at the code, and tap the notification that appears. No QR app is needed — iOS and Android both scan from the camera.
 
+### Joining the network as your own device
+
+The first time a phone opens the dashboard it is offered a choice:
+
+```
+  Join this network
+
+  Give this device a name and it becomes its own device on the
+  network — every other machine will see it, and can send it
+  messages and files.
+
+  [ iPhone                          ]
+
+  [ Join the network ]  [ Just view this computer ]
+```
+
+**Join**, and the laptop starts a real Bifrost node on the phone's behalf: its
+own node id, its own ports, its own discovery beacons. From any other machine:
+
+```sh
+$ bifrost peers
+● other-laptop      192.168.1.31    windows-pc   CPU 12.4%   9.1 GB free
+● Kailosh iPhone    192.168.1.24    iphone       CPU  0.0%   0.0 GB free
+```
+
+Messages you send from the phone come **from the phone**. Files sent to it —
+`/sendfile "Kailosh iPhone" report.pdf` from anywhere — appear under
+**Received files** on the phone, ready to save.
+
+The name sticks: the device keeps its identity across reloads and restarts, so
+aliases other people gave it survive too.
+
+**Just view this computer** is the right choice on the laptop that is already
+running a node — it does not need a second identity. Bifrost never offers to
+join when you open the dashboard on `localhost` for exactly that reason.
+
+To leave, use **Settings → This device → Leave the network**, or simply close
+the tab: an idle device is retired after 90 minutes.
+
+#### What this is, and what it is not
+
+A browser cannot be a peer on its own. Web pages cannot open UDP sockets or
+listen on TCP ports, so a phone in a browser can neither beacon nor be
+discovered — that is a platform limit, not something Bifrost can code around.
+Joining works by having the laptop run the phone's node for it.
+
+The consequences are worth knowing:
+
+| | Joined from a browser | Native app |
+|---|---|---|
+| Appears as its own device | yes | yes |
+| Send and receive messages | yes | yes |
+| Receive files | yes, pulled over HTTP | straight to the phone |
+| Needs a laptop running Bifrost | **yes** | no |
+| Works with every laptop asleep | no | yes |
+| Reports its own CPU and memory | no | yes |
+| Install required | **none** | build and sideload |
+
+For most people the browser route is the right trade. Build the native app when
+you want the phone genuinely independent — see [MOBILE.md](MOBILE.md).
+
 `bifrost serve` prints the same thing at startup. `bifrost` on its own does not, because the terminal dashboard takes over the screen immediately — which is exactly what `bifrost qr` is for. You can run it at any time, in any terminal, whether or not a node is running; it tells you if nothing is answering yet.
 
 If you would rather type it, the address is also in the terminal dashboard's header bar, and under **Settings → Connection** in the web dashboard.

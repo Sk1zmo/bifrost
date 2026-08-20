@@ -56,10 +56,42 @@ pub const HELP: &[(&str, &str)] = &[
     ("/quit", "Exit"),
 ];
 
+/// Split off a leading peer reference, honouring quotes.
+///
+/// Device names routinely contain spaces — "Kailosh iPhone", "Alice's
+/// ThinkPad" — and a phone that joins from a browser is named that way by
+/// default. Taking the first whitespace-delimited token would make every such
+/// device impossible to address, so a quoted first argument is understood.
+///
+/// Returns `(peer, rest)`.
+fn split_peer(input: &str) -> Option<(String, &str)> {
+    let input = input.trim_start();
+    let mut chars = input.char_indices();
+
+    match chars.next() {
+        // A quoted name runs to its closing quote.
+        Some((_, quote @ ('"' | '\''))) => {
+            let start = quote.len_utf8();
+            let end = input[start..].find(quote)? + start;
+            let peer = input[start..end].trim().to_string();
+            if peer.is_empty() {
+                return None;
+            }
+            Some((peer, input[end + quote.len_utf8()..].trim_start()))
+        }
+        Some(_) => {
+            let end = input.find(char::is_whitespace).unwrap_or(input.len());
+            Some((input[..end].to_string(), input[end..].trim_start()))
+        }
+        None => None,
+    }
+}
+
 /// Parse one line of input.
 ///
 /// `<peer>` is anything [`PeerRegistry::resolve`] accepts: a node id, an id
-/// prefix, a username, or an alias.
+/// prefix, a username, or an alias. Wrap it in quotes when it contains a
+/// space.
 ///
 /// [`PeerRegistry::resolve`]: crate::net::peers::PeerRegistry::resolve
 pub fn parse(line: &str) -> Option<Command> {
@@ -84,8 +116,8 @@ pub fn parse(line: &str) -> Option<Command> {
 
     let usage = |text: &str| Some(Command::Invalid(format!("usage: {text}")));
     let require_peer = |rest: &str, text: &str| -> Result<String, Option<Command>> {
-        match rest.split_whitespace().next() {
-            Some(peer) => Ok(peer.to_string()),
+        match split_peer(rest) {
+            Some((peer, _)) => Ok(peer),
             None => Err(usage(text)),
         }
     };
@@ -98,33 +130,26 @@ pub fn parse(line: &str) -> Option<Command> {
                 Some(Command::Broadcast(rest.to_string()))
             }
         }
-        "/msg" | "/dm" | "/tell" => match rest.split_once(char::is_whitespace) {
+        "/msg" | "/dm" | "/tell" => match split_peer(rest) {
             Some((peer, message)) if !message.trim().is_empty() => Some(Command::Direct {
-                peer: peer.to_string(),
+                peer,
                 message: message.trim().to_string(),
             }),
             _ => usage("/msg <peer> <message>"),
         },
         "/peers" | "/list" => Some(Command::Peers),
-        "/alias" | "/nick" => {
-            let mut parts = rest.splitn(2, char::is_whitespace);
-            match parts.next().filter(|p| !p.is_empty()) {
-                Some(peer) => Some(Command::Alias {
-                    peer: peer.to_string(),
-                    // No name clears the alias.
-                    alias: parts
-                        .next()
-                        .map(str::trim)
-                        .filter(|a| !a.is_empty())
-                        .map(String::from),
-                }),
-                None => usage("/alias <peer> [name]"),
-            }
-        }
-        "/sendfile" | "/send" | "/file" => match rest.split_once(char::is_whitespace) {
+        "/alias" | "/nick" => match split_peer(rest) {
+            Some((peer, alias)) => Some(Command::Alias {
+                peer,
+                // No name clears the alias.
+                alias: Some(unquote(alias.trim()).trim().to_string()).filter(|a| !a.is_empty()),
+            }),
+            None => usage("/alias <peer> [name]"),
+        },
+        "/sendfile" | "/send" | "/file" => match split_peer(rest) {
             // The path is the whole remainder, so filenames may contain spaces.
             Some((peer, path)) if !path.trim().is_empty() => Some(Command::SendFile {
-                peer: peer.to_string(),
+                peer,
                 path: PathBuf::from(unquote(path.trim())),
             }),
             _ => usage("/sendfile <peer> <path>"),
@@ -227,6 +252,90 @@ mod tests {
             })
         );
         assert!(matches!(parse("/sendfile bob"), Some(Command::Invalid(_))));
+    }
+
+    #[test]
+    fn a_peer_name_containing_spaces_can_be_targeted() {
+        // Phones that join from a browser are named this way by default
+        // ("Kailosh iPhone"), so without quoting they would be impossible to
+        // address at all — the first token would be taken as the whole name.
+        assert_eq!(
+            parse(r#"/sendfile "Kailosh iPhone" /home/me/report.pdf"#),
+            Some(Command::SendFile {
+                peer: "Kailosh iPhone".into(),
+                path: PathBuf::from("/home/me/report.pdf"),
+            })
+        );
+        assert_eq!(
+            parse(r#"/msg "Alice's ThinkPad" are you there?"#),
+            Some(Command::Direct {
+                peer: "Alice's ThinkPad".into(),
+                message: "are you there?".into(),
+            })
+        );
+        assert_eq!(
+            parse(r#"/call "Kailosh iPhone""#),
+            Some(Command::Call {
+                peer: "Kailosh iPhone".into()
+            })
+        );
+        assert_eq!(
+            parse(r#"/ping "Kailosh iPhone""#),
+            Some(Command::Ping {
+                peer: "Kailosh iPhone".into()
+            })
+        );
+
+        // Single quotes too, for shells that consume double ones.
+        assert_eq!(
+            parse("/sendfile 'Kailosh iPhone' /tmp/a.txt"),
+            Some(Command::SendFile {
+                peer: "Kailosh iPhone".into(),
+                path: PathBuf::from("/tmp/a.txt"),
+            })
+        );
+    }
+
+    #[test]
+    fn the_peer_and_the_path_may_be_quoted_independently() {
+        assert_eq!(
+            parse("/sendfile \"My Phone\" \"C:\\Users\\me\\My Documents\\a b.pdf\""),
+            Some(Command::SendFile {
+                peer: "My Phone".into(),
+                path: PathBuf::from("C:\\Users\\me\\My Documents\\a b.pdf"),
+            })
+        );
+    }
+
+    #[test]
+    fn an_unterminated_quote_is_rejected_rather_than_swallowing_the_line() {
+        // A usage hint beats silently treating the remainder as a peer name.
+        assert!(matches!(
+            parse(r#"/sendfile "unclosed /tmp/a"#),
+            Some(Command::Invalid(_))
+        ));
+        assert!(matches!(
+            parse(r#"/call "unclosed"#),
+            Some(Command::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn unquoted_peers_still_work_exactly_as_before() {
+        assert_eq!(
+            parse("/sendfile bob /tmp/a.txt"),
+            Some(Command::SendFile {
+                peer: "bob".into(),
+                path: PathBuf::from("/tmp/a.txt")
+            })
+        );
+        assert_eq!(
+            parse("/msg 550e hello there"),
+            Some(Command::Direct {
+                peer: "550e".into(),
+                message: "hello there".into()
+            })
+        );
     }
 
     #[test]

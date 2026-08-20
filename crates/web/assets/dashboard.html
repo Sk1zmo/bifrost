@@ -335,6 +335,37 @@ table.data th { color: var(--text-2); font-weight: 600; }
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
+/* ═══ Join ═══ */
+.join-veil {
+  position: fixed; inset: 0; z-index: 200;
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  backdrop-filter: blur(8px);
+  display: grid; place-items: center; padding: 22px;
+}
+.join-veil[hidden] { display: none; }
+.join-card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 26px 24px; max-width: 400px; width: 100%;
+}
+.join-mark {
+  width: 44px; height: 44px; border-radius: 12px; margin-bottom: 16px;
+  background: linear-gradient(140deg, var(--series-1), var(--series-2));
+  display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 21px;
+}
+.join-card h2 { font-size: 19px; margin-bottom: 8px; }
+.join-card p { margin: 0 0 18px; font-size: 13.5px; color: var(--text-2); line-height: 1.55; }
+.join-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.join-actions .btn { flex: 1; justify-content: center; min-width: 130px; }
+.join-note { margin: 14px 0 0 !important; font-size: 12.5px; color: var(--critical) !important; }
+
+.device-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 20px; font-size: 12px;
+  background: var(--surface-3); color: var(--text-2); border: 1px solid var(--border);
+}
+.device-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); flex: none; }
+
 .toast {
   position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom));
   transform: translateX(-50%) translateY(140%);
@@ -375,6 +406,25 @@ table.data th { color: var(--text-2); font-weight: 600; }
     <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
 </svg>
 
+<!-- Shown once, on a device that has not yet joined the network. -->
+<div class="join-veil" id="join-veil" hidden>
+  <div class="join-card">
+    <div class="join-mark">B</div>
+    <h2 id="join-title">Join this network</h2>
+    <p id="join-blurb">
+      Give this device a name and it becomes its own device on the network —
+      every other machine will see it, and can send it messages and files.
+    </p>
+    <label class="lab" for="join-name">Name for this device</label>
+    <input class="field" id="join-name" autocomplete="off" maxlength="64">
+    <div class="join-actions">
+      <button class="btn primary" id="join-go">Join the network</button>
+      <button class="btn" id="join-skip">Just view this computer</button>
+    </div>
+    <p class="join-note" id="join-error" hidden></p>
+  </div>
+</div>
+
 <header class="top">
   <div class="top-row">
     <div class="brand">
@@ -384,6 +434,7 @@ table.data th { color: var(--text-2); font-weight: 600; }
         <div class="brand-sub" id="identity">connecting…</div>
       </div>
     </div>
+    <span class="device-chip" id="device-chip" hidden><span class="dot"></span><span id="device-name"></span></span>
     <div class="conn" id="conn"><span class="dot"></span><span id="conn-text">Live</span></div>
     <button class="icon-btn" id="theme-toggle" title="Switch theme" aria-label="Switch theme">
       <svg width="17" height="17" aria-hidden="true"><use href="#i-moon" id="theme-icon"/></svg>
@@ -549,8 +600,18 @@ table.data th { color: var(--text-2); font-weight: 600; }
   <!-- ══ Settings ══ -->
   <section class="panel" id="panel-settings" role="tabpanel">
     <div class="grid cols-2">
+      <div class="card" id="device-card" hidden>
+        <div class="card-head"><h2>This device</h2></div>
+        <p style="margin:0 0 12px;font-size:13px;color:var(--text-2)">
+          <span id="device-summary"></span> is on the network as its own device,
+          hosted by this computer. It stays visible while this computer is
+          running Bifrost.
+        </p>
+        <button class="btn danger" id="device-leave">Leave the network</button>
+      </div>
+
       <div class="card">
-        <div class="card-head"><h2>This node</h2></div>
+        <div class="card-head"><h2 id="node-card-title">This node</h2></div>
         <label class="lab" for="set-name">Display name</label>
         <div style="display:flex;gap:8px;margin-bottom:16px">
           <input class="field" id="set-name" autocomplete="off">
@@ -605,7 +666,41 @@ const state = {
   net: [],            // { t, rx, tx } — rolling window for the throughput chart
   activeCall: null,
   connected: false,
+  // The companion device this browser is, if it has joined. Null means the
+  // page is simply viewing the machine that serves it.
+  device: null,
 };
+
+/* ═══ Which device is this browser? ═════════════════════════════════════════
+   A browser cannot be a peer on its own: it cannot open UDP sockets or listen
+   on TCP ports, so it can neither beacon nor be discovered. Joining asks the
+   host to run a real node on this device's behalf — with its own identity,
+   ports and beacons — and from then on every request carries `?as=<id>` so it
+   acts as that device rather than as the laptop.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const DEVICE_KEY = "bifrost-device";
+
+function loadDevice() {
+  try {
+    const raw = localStorage.getItem(DEVICE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveDevice(device) {
+  state.device = device;
+  try {
+    if (device) localStorage.setItem(DEVICE_KEY, JSON.stringify(device));
+    else localStorage.removeItem(DEVICE_KEY);
+  } catch { /* private browsing */ }
+}
+
+/// Append `?as=<id>` so a request acts as this device.
+function withDevice(path) {
+  if (!state.device) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}as=${encodeURIComponent(state.device.id)}`;
+}
 
 const NET_POINTS = 60;          // 60 samples × 2 s = 2 minutes
 const $ = (id) => document.getElementById(id);
@@ -661,13 +756,45 @@ function deviceIcon(type) {
 
 /* ═══ Networking ══════════════════════════════════════════════════════════ */
 async function api(path, options = {}) {
-  const response = await fetch(path, options);
+  const response = await fetch(withDevice(path), options);
+
+  // 410 means the host no longer knows this device — it was idle-pruned, or
+  // the laptop restarted. Re-claim with the same id so the device keeps its
+  // identity, and the aliases other machines gave it.
+  if (response.status === 410 && state.device) {
+    const recovered = await rejoin();
+    if (recovered) {
+      const retry = await fetch(withDevice(path), options);
+      if (retry.ok) return retry.status === 204 ? null : retry.json();
+    }
+  }
+
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try { message = (await response.json()).error || message; } catch { /* not JSON */ }
     throw new Error(message);
   }
   return response.status === 204 ? null : response.json();
+}
+
+/// Re-register a device the host has forgotten, keeping its id.
+async function rejoin() {
+  const previous = state.device;
+  if (!previous) return false;
+  try {
+    const device = await fetch("/api/companion", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: previous.id, name: previous.name }),
+    }).then((r) => (r.ok ? r.json() : null));
+
+    if (device) {
+      saveDevice(device);
+      pushLog("info", `${device.name} rejoined the network`);
+      return true;
+    }
+  } catch { /* the host is unreachable; the caller reports it */ }
+  return false;
 }
 
 const post = (path, body) => api(path, {
@@ -1096,7 +1223,7 @@ async function refresh() {
 }
 
 function connectEvents() {
-  const source = new EventSource("/api/events");
+  const source = new EventSource(withDevice("/api/events"));
 
   source.addEventListener("open", () => setConnected(true));
 
@@ -1397,11 +1524,190 @@ $("help-body").innerHTML = [
 ].map(([syntax, description]) =>
   `<tr><td><code>${syntax}</code></td><td style="text-align:left">${description}</td></tr>`).join("");
 
+/* ═══ Joining ═════════════════════════════════════════════════════════════ */
+const veil = $("join-veil");
+
+function showJoinPrompt(suggestedName) {
+  $("join-name").value = suggestedName || "";
+  veil.hidden = false;
+  // Do not steal focus on a phone: the keyboard would cover the buttons.
+  if (!matchMedia("(pointer: coarse)").matches) $("join-name").focus();
+}
+
+async function join(name) {
+  const error = $("join-error");
+  error.hidden = true;
+  $("join-go").disabled = true;
+
+  try {
+    if (state.device) {
+      // The host already started this device while proposing a name, so
+      // confirming renames it. Claiming again would put a second, duplicate
+      // device on the network.
+      if (name !== state.device.name) {
+        await api("/api/rename", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: name }),
+        });
+        saveDevice({ ...state.device, name });
+      }
+    } else {
+      const device = await fetch("/api/companion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      }).then(async (r) => {
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+        return r.json();
+      });
+      saveDevice(device);
+    }
+
+    veil.hidden = true;
+    reflectDevice();
+    pushLog("success", `${state.device.name} is on the network`);
+
+    // The view is now this device's, not the host's, so start it fresh.
+    state.net = [];
+    connectEvents();
+    refresh();
+  } catch (e) {
+    error.textContent = e.message;
+    error.hidden = false;
+  } finally {
+    $("join-go").disabled = false;
+  }
+}
+
+function reflectDevice() {
+  const chip = $("device-chip");
+  const card = $("device-card");
+
+  if (state.device) {
+    $("device-name").textContent = state.device.name;
+    $("device-summary").textContent = state.device.name;
+    chip.hidden = false;
+    card.hidden = false;
+    // The rename field now renames this device, not the host computer.
+    $("node-card-title").textContent = "This device";
+  } else {
+    chip.hidden = true;
+    card.hidden = true;
+    $("node-card-title").textContent = "This node";
+  }
+}
+
+$("device-leave").addEventListener("click", async () => {
+  const leaving = state.device;
+  if (!leaving) return;
+  if (!confirm(`Take "${leaving.name}" off the network?`)) return;
+
+  // Clear locally first, so the page stops acting as a device that is about
+  // to stop existing.
+  saveDevice(null);
+  reflectDevice();
+  try {
+    await fetch("/api/companion/leave", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: leaving.id }),
+    });
+    // Declining is remembered, so closing and reopening does not nag.
+    try { localStorage.setItem("bifrost-device-declined", "1"); } catch { /* ignore */ }
+    pushLog("info", `${leaving.name} left the network`);
+  } catch (e) {
+    pushLog("error", e.message);
+  }
+
+  state.net = [];
+  connectEvents();
+  refresh();
+});
+
+$("join-go").addEventListener("click", () => {
+  const name = $("join-name").value.trim();
+  if (!name) return;
+  join(name);
+});
+
+$("join-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("join-go").click();
+});
+
+// Viewing without joining is a legitimate choice — it is what you want on the
+// laptop that is already a node.
+$("join-skip").addEventListener("click", async () => {
+  veil.hidden = true;
+  try { localStorage.setItem("bifrost-device-declined", "1"); } catch { /* ignore */ }
+
+  // A device was already started while proposing a name; declining must take
+  // it back off the network rather than leaving a stray one advertised.
+  if (state.device) {
+    const abandoned = state.device;
+    saveDevice(null);
+    reflectDevice();
+    await fetch("/api/companion/leave", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: abandoned.id }),
+    }).catch(() => {});
+    state.net = [];
+    connectEvents();
+    refresh();
+  }
+});
+
+/// Decide, on load, whether this browser should be offered a device.
+async function resolveDevice() {
+  const saved = loadDevice();
+  if (saved) {
+    state.device = saved;
+    reflectDevice();
+    // Confirm the host still has it; rejoin silently if not.
+    await rejoin();
+    reflectDevice();
+    return;
+  }
+
+  let declined = false;
+  try { declined = localStorage.getItem("bifrost-device-declined") === "1"; } catch { /* ignore */ }
+  if (declined) return;
+
+  // Only offer it where it makes sense. A browser on the machine already
+  // running the node does not need a second identity, so localhost is
+  // skipped; anything else reaching this dashboard is a separate device.
+  const isHostMachine = ["localhost", "127.0.0.1", "::1"].includes(location.hostname);
+  if (isHostMachine) return;
+
+  const suggestion = await fetch("/api/companion", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // No name: the host proposes one from the User-Agent, and we take the
+    // name only, without keeping the device, until the user confirms.
+    body: JSON.stringify({ name: null }),
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+
+  if (!suggestion) return;
+
+  // The host has already started a device; adopt it, and let the name be
+  // edited rather than starting a second one.
+  saveDevice(suggestion);
+  reflectDevice();
+  showJoinPrompt(suggestion.name);
+}
+
 /* ═══ Go ══════════════════════════════════════════════════════════════════ */
 bindNetHover();
-refresh();
-refreshDownloads();
-connectEvents();
+
+resolveDevice().finally(() => {
+  refresh();
+  refreshDownloads();
+  connectEvents();
+});
+
 setInterval(refresh, 2000);
 setInterval(refreshDownloads, 15000);
 setInterval(pumpAudio, 400);

@@ -33,6 +33,7 @@ Run one command on two machines on the same Wi‑Fi and they find each other in 
 | **Live telemetry** | CPU, memory, disk and network for every device, pooled across the network |
 | **Voice** | LAN calls — signalling plus a direct UDP audio path |
 | **Two dashboards** | A terminal UI, and a web UI any browser on the network can open |
+| **Phones with no app** | A phone joins from its browser as its own named device, visible to every machine |
 | **Resource sharing** | Each node advertises spare capacity for Phase 2's scheduler |
 
 Everything stays on your LAN. There is no relay server, no cloud account, and no internet dependency of any kind.
@@ -107,9 +108,25 @@ Inside either dashboard:
 
 ## Your phone
 
-**No app needed.** Run `bifrost qr` to print the address and a scannable QR code, point your phone's camera at it, and you get the full interface in the browser: peers, chat, file upload and download, telemetry, and push-to-talk voice. Add it to your home screen and it behaves like an app.
+**No app needed.** Run `bifrost qr`, point your phone's camera at the code, and the dashboard opens. The first time, it offers to **join the network** — name the device, and the laptop starts a real Bifrost node on its behalf.
 
-**As a real peer.** To make the phone itself a node — discovering, beaconing and transferring directly — build one of the native clients:
+That is not a nickname on someone else's session. The phone gets its own node id, its own ports and its own discovery beacons, so every other machine sees it as a separate device:
+
+```
+$ bifrost peers
+● other-laptop      192.168.1.31    windows-pc   CPU 12.4%   9.1 GB free
+● Kailosh iPhone    192.168.1.24    iphone       CPU  0.0%   0.0 GB free
+```
+
+Messages from it come *from it*. `/sendfile "Kailosh iPhone" report.pdf` works from any machine, and the file appears under **Received files** on the phone.
+
+Honest limits, since it needs nothing installed:
+
+- its sockets live in the host laptop's process, so it is on the network only while that laptop runs Bifrost
+- files sent to it land on the host, and the phone pulls them over HTTP
+- it reports no CPU or memory, because a browser cannot see them
+
+**As a fully independent peer.** When those limits matter — the phone discovering on its own, receiving files directly, working with every laptop asleep — build a native client:
 
 ```sh
 ./scripts/build-android.sh                       # then: cd clients/flutter && flutter run
