@@ -10,11 +10,7 @@ use bifrost_core::net::peers::Peer;
 use bifrost_core::net::scan::{scan, ScanOptions, ScanReport, ThisDevice};
 
 /// Run a scan and print it.
-pub async fn run(
-    peers: Vec<Peer>,
-    this: Option<ThisDevice>,
-    options: ScanOptions,
-) -> Result<()> {
+pub async fn run(peers: Vec<Peer>, this: Option<ThisDevice>, options: ScanOptions) -> Result<()> {
     println!();
     println!("  Looking for devices…");
     if options.sweep_subnet {
@@ -102,7 +98,9 @@ fn print_report(report: &ScanReport) {
     if candidates > 0 {
         println!();
         println!("  To bring one of those in, install Bifrost on it:");
-        println!("    curl -fsSL https://raw.githubusercontent.com/Sk1zmo/bifrost/main/install.sh | sh");
+        println!(
+            "    curl -fsSL https://raw.githubusercontent.com/Sk1zmo/bifrost/main/install.sh | sh"
+        );
         println!("    irm https://raw.githubusercontent.com/Sk1zmo/bifrost/main/install.ps1 | iex");
     }
     println!();

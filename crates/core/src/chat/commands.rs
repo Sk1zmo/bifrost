@@ -68,7 +68,10 @@ pub const HELP: &[(&str, &str)] = &[
     ("/pair", "Show a code, so another device may use this one"),
     ("/pair <peer> <code>", "Use another device's hardware"),
     ("/unpair <peer>", "Withdraw a device's access to this one"),
-    ("/run <model|task> <text>", "Run work on whichever device suits it"),
+    (
+        "/run <model|task> <text>",
+        "Run work on whichever device suits it",
+    ),
     ("/jobs", "Show queued, running and finished work"),
     ("/me <name>", "Change your display name"),
     ("/status", "Show this node's status"),
@@ -263,9 +266,18 @@ mod compute_command_tests {
     #[test]
     fn compute_reads_as_a_question_or_a_switch() {
         assert!(matches!(parse("/compute"), Some(Command::Compute)));
-        assert!(matches!(parse("/compute on"), Some(Command::ComputeShare(true))));
-        assert!(matches!(parse("/compute OFF"), Some(Command::ComputeShare(false))));
-        assert!(matches!(parse("/compute sideways"), Some(Command::Invalid(_))));
+        assert!(matches!(
+            parse("/compute on"),
+            Some(Command::ComputeShare(true))
+        ));
+        assert!(matches!(
+            parse("/compute OFF"),
+            Some(Command::ComputeShare(false))
+        ));
+        assert!(matches!(
+            parse("/compute sideways"),
+            Some(Command::Invalid(_))
+        ));
     }
 
     #[test]
@@ -281,13 +293,17 @@ mod compute_command_tests {
         assert_eq!(peer, "Kailosh iPhone");
         assert_eq!(code, "913746");
 
-        assert!(matches!(parse("/pair workshop-nuc"), Some(Command::Invalid(_))));
+        assert!(matches!(
+            parse("/pair workshop-nuc"),
+            Some(Command::Invalid(_))
+        ));
     }
 
     #[test]
     fn run_keeps_everything_after_the_name_as_one_argument() {
         // A prompt is prose and must survive intact, spaces and all.
-        let Some(Command::Run { what, arguments }) = parse("/run llama3.2:3b  why is the sky blue?")
+        let Some(Command::Run { what, arguments }) =
+            parse("/run llama3.2:3b  why is the sky blue?")
         else {
             panic!("a prompt must parse");
         };

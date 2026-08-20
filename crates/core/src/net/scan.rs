@@ -190,11 +190,7 @@ impl Default for ScanOptions {
 ///
 /// `peers` is what discovery already knows; it is passed in rather than
 /// re-derived so a scan reflects exactly what the rest of the node believes.
-pub async fn scan(
-    peers: &[Peer],
-    this: Option<&ThisDevice>,
-    options: &ScanOptions,
-) -> ScanReport {
+pub async fn scan(peers: &[Peer], this: Option<&ThisDevice>, options: &ScanOptions) -> ScanReport {
     let started = std::time::Instant::now();
     let mut report = ScanReport::default();
 
@@ -216,7 +212,9 @@ pub async fn scan(
         entry.running_bifrost = true;
         entry.sharing_compute = peer.compute.enabled;
         note(entry, Source::Bifrost);
-        entry.details.push(format!("{} · {}", peer.device_type, peer.os));
+        entry
+            .details
+            .push(format!("{} · {}", peer.device_type, peer.os));
         if peer.compute.enabled {
             if let Some(gpu) = peer.compute.accelerator() {
                 entry.details.push(gpu.summary());
@@ -282,9 +280,11 @@ pub async fn scan(
             if addresses.is_empty() {
                 continue;
             }
-            report
-                .swept
-                .push(format!("{}/{prefix} ({} addresses)", interface.ip, addresses.len()));
+            report.swept.push(format!(
+                "{}/{prefix} ({} addresses)",
+                interface.ip,
+                addresses.len()
+            ));
 
             for ip in probe_many(&addresses, options.bifrost_port).await {
                 let key = ip.to_string();
@@ -523,12 +523,12 @@ fn build_query(name: &str) -> Vec<u8> {
     }
     packet.push(0); // end of name
     packet.extend_from_slice(&[0, 12]); // PTR
-    // Class IN with the top bit set: RFC 6762's "unicast reply, please".
-    //
-    // Without it, responders answer to the multicast group, and a socket on an
-    // ephemeral port that has not joined that group never sees a word of it —
-    // which is exactly how this first scanned a live network and reported no
-    // mDNS at all.
+                                        // Class IN with the top bit set: RFC 6762's "unicast reply, please".
+                                        //
+                                        // Without it, responders answer to the multicast group, and a socket on an
+                                        // ephemeral port that has not joined that group never sees a word of it —
+                                        // which is exactly how this first scanned a live network and reported no
+                                        // mDNS at all.
     packet.extend_from_slice(&[0x80, 1]);
     packet
 }
@@ -896,7 +896,11 @@ mod tests {
         let linux = "192.168.1.1 dev wlan0 lladdr a4:2b:b0:11:22:33 REACHABLE\n\
                      192.168.1.77 dev wlan0 FAILED\n";
         let parsed = parse_neighbours(linux);
-        assert_eq!(parsed.len(), 1, "an entry with no hardware address is not usable");
+        assert_eq!(
+            parsed.len(),
+            1,
+            "an entry with no hardware address is not usable"
+        );
     }
 
     #[test]
@@ -967,7 +971,10 @@ mod tests {
                        BTHENUM\\{guid}\\junk|Not a device\n";
         assert_eq!(
             parse_windows_bluetooth(windows),
-            vec![("a1:b2:c3:d4:e5:f6".to_string(), "Someone's Headphones".to_string())]
+            vec![(
+                "a1:b2:c3:d4:e5:f6".to_string(),
+                "Someone's Headphones".to_string()
+            )]
         );
 
         let linux = "Device AA:BB:CC:DD:EE:FF Desk Speaker\nnot a device line\n";
@@ -980,7 +987,10 @@ mod tests {
                      Address: AA-BB-CC-DD-EE-01\n          Minor Type: Speaker\n";
         assert_eq!(
             parse_system_profiler(macos),
-            vec![("aa:bb:cc:dd:ee:01".to_string(), "Studio Display".to_string())]
+            vec![(
+                "aa:bb:cc:dd:ee:01".to_string(),
+                "Studio Display".to_string()
+            )]
         );
     }
 
@@ -1024,11 +1034,7 @@ mod tests {
 
         // 127.0.0.2 is also loopback on every platform Bifrost targets, and
         // nothing is bound there — so it must not answer.
-        let answered = probe_many(
-            &[Ipv4Addr::LOCALHOST, Ipv4Addr::new(127, 0, 0, 2)],
-            port,
-        )
-        .await;
+        let answered = probe_many(&[Ipv4Addr::LOCALHOST, Ipv4Addr::new(127, 0, 0, 2)], port).await;
 
         assert_eq!(answered, vec![Ipv4Addr::LOCALHOST]);
     }

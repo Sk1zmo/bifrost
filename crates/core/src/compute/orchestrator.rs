@@ -829,7 +829,10 @@ mod tests {
 
         let job = orchestrator.job(&id).await.unwrap();
         assert_eq!(job.state, JobState::Failed);
-        assert_eq!(job.error.as_deref(), Some("this device has not been paired"));
+        assert_eq!(
+            job.error.as_deref(),
+            Some("this device has not been paired")
+        );
         assert!(orchestrator.next_ready().await.is_none());
     }
 
