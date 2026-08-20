@@ -13,11 +13,12 @@ A guide from nothing installed to every device on your network connected.
 7. [Voice calls](#7-voice-calls)
 8. [Watch the whole network](#8-watch-the-whole-network)
 9. [Keep it running](#9-keep-it-running)
-10. [Put a phone on the network as a real peer](#10-put-a-phone-on-the-network-as-a-real-peer)
-11. [Share GPUs and run work across the network](#10a-sharing-gpus-and-running-work-across-the-network)
-12. [Scripting and automation](#11-scripting-and-automation)
-13. [Settings](#12-settings)
-14. [When something is wrong](#13-when-something-is-wrong)
+10. [Find what else is on your network](#9a-find-what-else-is-on-your-network)
+11. [Put a phone on the network as a real peer](#10-put-a-phone-on-the-network-as-a-real-peer)
+12. [Share GPUs and run work across the network](#10a-sharing-gpus-and-running-work-across-the-network)
+13. [Scripting and automation](#11-scripting-and-automation)
+14. [Settings](#12-settings)
+15. [When something is wrong](#13-when-something-is-wrong)
 
 ---
 
@@ -406,6 +407,51 @@ Full detail in [MOBILE.md](MOBILE.md).
 
 ---
 
+## 9a. Find what else is on your network
+
+Devices running Bifrost appear on their own within seconds. This answers the
+other question — what is here that **has not joined yet**:
+
+```sh
+bifrost scan
+```
+
+```
+  ◆ 192.168.1.24   workshop-nuc   running Bifrost, sharing its hardware
+  ● 192.168.1.31   alice-laptop   running Bifrost
+  ○ 192.168.1.1    —              seen on this network
+  ○ 192.168.1.64   Brother HL-L2350DW   advertising itself
+  ○ 0c:c4:13:4a:98:4f  Pixel 7 Pro  paired over Bluetooth
+
+  12 devices found in 5.0s · 2 running Bifrost · 10 not
+  Swept 192.168.1.24/24 (253 addresses)
+  Skipped Tailscale is a /8, too large to sweep; using passive sources only
+```
+
+It looks in four places: your machine's own neighbour table, a probe of the
+local subnet, mDNS (which is how phones, printers and TVs announce
+themselves), and the Bluetooth devices this machine has paired with.
+
+It always says what it **did not** cover, because a partial scan that looks
+complete turns "I could not check" into "it is not there".
+
+`bifrost scan --quick` skips the subnet probe: much faster, finds less.
+`--no-bluetooth` skips the Bluetooth listing.
+
+In the dashboard the same thing is **Devices → Find more devices**.
+
+It works before you have started anything — on a machine where you have just
+installed Bifrost, "what else is out there" is exactly the question, and there
+is nothing running yet to ask.
+
+> **Bluetooth is listed, not scanned.** Bifrost's mesh cannot run over
+> Bluetooth LE — advertising as a peripheral is unavailable on desktop
+> platforms through any portable library, so a BLE mesh would work on
+> precisely the devices that already have Wi-Fi. The list is still useful for
+> "is that machine here?", since a device you have paired is a device you own.
+
+---
+
 ## 10a. Sharing GPUs and running work across the network
 
 This is the part that turns a group of devices into one machine.
@@ -489,6 +535,7 @@ curl -X POST localhost:9000/api/command \
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/api/snapshot` | GET | Everything, in one consistent view |
+| `/api/scan` | POST | Search the network and Bluetooth for devices |
 | `/api/compute` | GET | The network's pooled GPUs, models, tasks and jobs |
 | `/api/compute/run` | POST | Submit work to the network |
 | `/api/events` | GET | Server-sent event stream |

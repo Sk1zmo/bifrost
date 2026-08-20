@@ -138,6 +138,22 @@ Both link the same Rust core the desktop runs. See [docs/MOBILE.md](docs/MOBILE.
 
 ---
 
+## Finding what is out there
+
+```sh
+bifrost scan
+```
+
+Discovery hears beacons, so it only ever finds Bifrost. `scan` looks wider —
+the neighbour table, a probe of the local subnet, mDNS, and this machine's
+paired Bluetooth devices — and tells you what is on your network that has
+**not** joined yet, so you know where to install it next. It says what it did
+not cover, too.
+
+The dashboard has the same thing under **Devices → Find more devices**.
+
+---
+
 ## Sharing real work, not just files
 
 Every node advertises its GPUs, its installed models and the tasks its owner

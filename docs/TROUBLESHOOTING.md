@@ -74,7 +74,22 @@ Tailscale, WireGuard, ZeroTier, Radmin and corporate VPN clients all add network
 
 Same shape of problem. They usually sit on their own subnets and are harmless, but they can confuse a network stack. `bifrost doctor` lists every interface it found.
 
-### 6. Broadcast is being dropped
+### 6. Is the other machine there at all?
+
+```sh
+bifrost scan
+```
+
+This does not rely on beacons, so it works when discovery does not. If the
+other machine appears in the scan — and especially if it is marked *answered
+on a Bifrost port* — then it is running, reachable, and the problem is
+specifically that its beacons are not arriving. Read on.
+
+If it does **not** appear at all, the two machines cannot reach each other,
+and no setting in Bifrost will change that: go back to client isolation and
+subnets above.
+
+### 7. Broadcast is being dropped
 
 Some Wi-Fi drivers and access points drop broadcast to save airtime. Bifrost sends to limited broadcast, subnet-directed broadcast *and* multicast specifically to survive this, but a sufficiently aggressive network can drop all three.
 

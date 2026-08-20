@@ -119,6 +119,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/manifest.webmanifest", get(manifest))
         .route("/health", get(health))
         .route("/api/snapshot", get(snapshot))
+        .route("/api/scan", post(network_scan))
         .route("/api/events", get(events))
         .route("/api/command", post(command))
         .route("/api/chat", post(chat))
@@ -257,6 +258,42 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 // ─── Reading state ───────────────────────────────────────────────────────────
+
+/// Look for devices on this network, including ones not running Bifrost.
+///
+/// A POST because it is an action with a cost — it probes a subnet and shells
+/// out to the platform — not a value that can be fetched twice for free.
+async fn network_scan(
+    State(state): State<AppState>,
+    Query(as_device): Query<AsDevice>,
+    Json(body): Json<ScanRequest>,
+) -> ApiResult<impl IntoResponse> {
+    use bifrost_core::net::scan::{scan, ScanOptions, ThisDevice};
+
+    let node = state.node_for(as_device.as_device.as_deref()).await?;
+    let snapshot = node.snapshot().await;
+
+    let this = ThisDevice {
+        address: snapshot.ip.clone(),
+        name: snapshot.identity.username.clone(),
+        sharing_compute: node.compute.is_enabled().await,
+    };
+
+    let options = ScanOptions {
+        sweep_subnet: !body.quick,
+        bifrost_port: snapshot.ports.messaging,
+        ..Default::default()
+    };
+
+    Ok(Json(scan(&snapshot.peers, Some(&this), &options).await))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ScanRequest {
+    /// Skip the subnet probe: seconds rather than a moment, and finds less.
+    #[serde(default)]
+    quick: bool,
+}
 
 async fn snapshot(
     State(state): State<AppState>,

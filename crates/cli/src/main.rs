@@ -6,6 +6,7 @@
 
 mod doctor;
 mod qr;
+mod scan;
 mod service;
 mod tui;
 
@@ -85,6 +86,16 @@ enum Command {
     Doctor,
     /// List devices seen by the node running on this machine.
     Peers,
+    /// Search the network and Bluetooth for devices, including ones not yet
+    /// running Bifrost.
+    Scan {
+        /// Skip the subnet probe. Much faster, and finds less.
+        #[arg(long)]
+        quick: bool,
+        /// Skip the Bluetooth listing.
+        #[arg(long)]
+        no_bluetooth: bool,
+    },
     /// Broadcast a message through the node running on this machine.
     Chat {
         /// The message.
@@ -147,6 +158,23 @@ async fn run(mut cli: Cli) -> Result<()> {
     // rather than starting a second node that would bind the same ports.
     match &command {
         Command::Peers => return client_command(&cli, "/peers").await,
+        Command::Scan {
+            quick,
+            no_bluetooth,
+        } => {
+            let config = load_config(&cli)?;
+            let options = bifrost_core::net::scan::ScanOptions {
+                sweep_subnet: !quick,
+                use_bluetooth: !no_bluetooth,
+                bifrost_port: config.ports.messaging,
+                ..Default::default()
+            };
+            // A node is useful here but not required: on a machine where
+            // Bifrost was installed a minute ago, "what else is out there" is
+            // exactly the question, and there is nothing running yet to ask.
+            let (peers, this) = known_from_running_node(&config).await;
+            return scan::run(peers, this, options).await;
+        }
         Command::Chat { words } => return client_command(&cli, &words.join(" ")).await,
         Command::Send { peer, path } => {
             let absolute = path
@@ -296,6 +324,51 @@ fn print_banner(node: &Node, ports: PortSet, localhost_only: bool) {
 }
 
 /// Send a command line to the node running on this machine.
+/// What a node running on this machine already knows.
+///
+/// Empty when none is running, which is a supported case: on a machine where
+/// Bifrost was installed a minute ago, "what else is out there" is exactly the
+/// question and there is nothing running yet to ask.
+async fn known_from_running_node(
+    config: &Config,
+) -> (
+    Vec<bifrost_core::net::peers::Peer>,
+    Option<bifrost_core::net::scan::ThisDevice>,
+) {
+    let base = format!("http://127.0.0.1:{}", config.ports.web);
+    let Ok(snapshot) = http_get_json(&format!("{base}/api/snapshot")).await else {
+        return (Vec::new(), None);
+    };
+
+    let peers = snapshot
+        .get("peers")
+        .and_then(|peers| serde_json::from_value(peers.clone()).ok())
+        .unwrap_or_default();
+
+    let sharing = http_get_json(&format!("{base}/api/compute"))
+        .await
+        .ok()
+        .and_then(|compute| compute.get("enabled").and_then(|e| e.as_bool()))
+        .unwrap_or(false);
+
+    let this = match (
+        snapshot.get("ip").and_then(|v| v.as_str()),
+        snapshot
+            .get("identity")
+            .and_then(|i| i.get("username"))
+            .and_then(|v| v.as_str()),
+    ) {
+        (Some(address), Some(name)) => Some(bifrost_core::net::scan::ThisDevice {
+            address: address.to_string(),
+            name: name.to_string(),
+            sharing_compute: sharing,
+        }),
+        _ => None,
+    };
+
+    (peers, this)
+}
+
 async fn client_command(cli: &Cli, line: &str) -> Result<()> {
     let config = load_config(cli)?;
     let url = format!("http://127.0.0.1:{}/api/command", config.ports.web);
@@ -317,18 +390,33 @@ async fn client_command(cli: &Cli, line: &str) -> Result<()> {
     Ok(())
 }
 
-/// A minimal HTTP POST, so the CLI needs no HTTP client dependency.
-///
-/// It only ever talks to `127.0.0.1` and only ever posts small JSON bodies,
-/// so a full client would be a large dependency for one request shape.
 async fn http_post_json(url: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
+    http_json("POST", url, Some(body)).await
+}
+
+async fn http_get_json(url: &str) -> Result<serde_json::Value> {
+    http_json("GET", url, None).await
+}
+
+/// A minimal HTTP client, so the CLI needs no HTTP dependency.
+///
+/// It only ever talks to `127.0.0.1` and only ever exchanges JSON, so a full
+/// client would be a large dependency for one request shape.
+async fn http_json(
+    method: &str,
+    url: &str,
+    body: Option<&serde_json::Value>,
+) -> Result<serde_json::Value> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let rest = url
         .strip_prefix("http://")
         .context("only http:// is supported")?;
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-    let payload = serde_json::to_vec(body)?;
+    let payload = match body {
+        Some(value) => serde_json::to_vec(value)?,
+        None => Vec::new(),
+    };
 
     let mut stream = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -339,12 +427,14 @@ async fn http_post_json(url: &str, body: &serde_json::Value) -> Result<serde_jso
     .context("could not connect")?;
 
     let request = format!(
-        "POST /{path} HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\n\
+        "{method} /{path} HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\n\
          Content-Length: {}\r\nConnection: close\r\n\r\n",
         payload.len()
     );
     stream.write_all(request.as_bytes()).await?;
-    stream.write_all(&payload).await?;
+    if !payload.is_empty() {
+        stream.write_all(&payload).await?;
+    }
     stream.flush().await?;
 
     let mut raw = Vec::new();

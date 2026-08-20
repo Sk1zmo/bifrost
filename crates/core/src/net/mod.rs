@@ -7,5 +7,6 @@ pub mod iface;
 pub mod messaging;
 pub mod peers;
 pub mod protocol;
+pub mod scan;
 
 pub use peers::{Peer, PeerRegistry};

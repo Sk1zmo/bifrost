@@ -58,7 +58,8 @@ crates/core/src/
 │   ├── iface.rs      Interface enumeration, broadcast targets, reachability
 │   ├── discovery.rs  UDP beacons: broadcast + multicast
 │   ├── messaging.rs  TCP chat and control
-│   └── peers.rs      PeerRegistry
+│   ├── peers.rs      PeerRegistry
+│   └── scan.rs       Finding devices that are *not* running Bifrost
 ├── chat/
 │   ├── history.rs    ChatStore with de-duplication
 │   ├── commands.rs   Slash-command parser
