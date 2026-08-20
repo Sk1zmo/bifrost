@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
 
 use crate::compute::protocol::PAIRING_CODE_TTL_SECS;
 
@@ -47,12 +47,21 @@ struct PendingCode {
 }
 
 /// Who may run work here.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct TrustStore {
     trusted: Arc<RwLock<HashMap<String, TrustedPeer>>>,
     pending: Arc<RwLock<Option<PendingCode>>>,
     /// When false, anyone on the network may submit work without pairing.
     require_pairing: Arc<RwLock<bool>>,
+    /// Bumped whenever access is granted or withdrawn, so the node can write
+    /// the change to disk without this module knowing what a config is.
+    changed: Arc<watch::Sender<u64>>,
+}
+
+impl Default for TrustStore {
+    fn default() -> Self {
+        Self::new(true)
+    }
 }
 
 impl std::fmt::Debug for TrustStore {
@@ -67,7 +76,17 @@ impl TrustStore {
             trusted: Arc::new(RwLock::new(HashMap::new())),
             pending: Arc::new(RwLock::new(None)),
             require_pairing: Arc::new(RwLock::new(require_pairing)),
+            changed: Arc::new(watch::channel(0).0),
         }
+    }
+
+    /// Fires when a device is granted or loses access.
+    pub fn changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    fn announce_change(&self) {
+        self.changed.send_modify(|version| *version += 1);
     }
 
     /// Restore peers paired in an earlier run.
@@ -172,6 +191,7 @@ impl TrustStore {
             },
         );
 
+        self.announce_change();
         tracing::info!(peer = %display_name, "paired; it may now use this node's resources");
         Ok(token)
     }
@@ -201,7 +221,11 @@ impl TrustStore {
 
     /// Withdraw a peer's access.
     pub async fn revoke(&self, node_id: &str) -> bool {
-        self.trusted.write().await.remove(node_id).is_some()
+        let removed = self.trusted.write().await.remove(node_id).is_some();
+        if removed {
+            self.announce_change();
+        }
+        removed
     }
 }
 

@@ -110,6 +110,12 @@ thousand chance for an attacker who is **already on your network**.
 
 To withdraw access later, Compute → the device → **Revoke**.
 
+**Pairing is one-directional.** Reading a code off a workstation lets *you* use
+*it*. It does not let that workstation use your laptop; for that, it pairs with
+you in turn, off a code you show. The two halves are stored separately —
+`compute_tokens` is what this machine presents to others, `compute_trusted` is
+who may use this one — and only the second grants anything locally.
+
 Setting `compute_require_pairing: false` opens this machine's declared tasks
 to anyone on the network. Reasonable on a lab network you fully control;
 never on Wi-Fi you share.

@@ -36,7 +36,9 @@ pub mod service;
 
 pub use jobs::{TaskDefinition, TaskRegistry};
 pub use ollama::Ollama;
-pub use orchestrator::{ClusterCapacity, Orchestrator, Priority, ScheduledJob, Work};
+pub use orchestrator::{
+    ClusterCapacity, DeviceCapacity, Orchestrator, Priority, ScheduledJob, Work,
+};
 pub use pairing::{PairingError, TrustStore, TrustedPeer};
 pub use protocol::{Capabilities, ModelInfo, TaskInfo};
 pub use service::ComputeService;

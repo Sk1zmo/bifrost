@@ -39,6 +39,7 @@ async fn overview(State(state): State<AppState>) -> impl IntoResponse {
         "pairing_code": node.compute.trust.current_code().await,
         "trusted": node.compute.trust.list().await,
         "capacity": node.orchestrator.capacity().await,
+        "devices": node.orchestrator.devices().await,
         "jobs": node.orchestrator.jobs().await,
         "running_here": node.compute.running_jobs().await,
     }))

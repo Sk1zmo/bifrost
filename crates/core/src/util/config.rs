@@ -75,8 +75,20 @@ pub struct Config {
     ///
     /// Persisted so pairing survives a restart; losing them would mean
     /// re-reading a code off every machine after every reboot.
+    ///
+    /// These are **outbound**: a token this machine presents to someone else.
+    /// They must never be loaded as inbound trust — holding a token for a
+    /// device says nothing about whether that device may use this one, and
+    /// treating the two as the same thing would silently make every pairing
+    /// mutual.
     #[serde(default)]
     pub compute_tokens: HashMap<String, String>,
+
+    /// Devices allowed to use *this* machine, and the token each was issued.
+    ///
+    /// The inbound half, and the only half that grants anything here.
+    #[serde(default)]
+    pub compute_trusted: Vec<crate::compute::TrustedPeer>,
 
     /// The tasks this machine will run for others.
     ///
@@ -159,6 +171,7 @@ impl Config {
             compute_max_jobs: default_max_jobs(),
             orchestrator_enabled: true,
             compute_tokens: HashMap::new(),
+            compute_trusted: Vec::new(),
             tasks: HashMap::new(),
         }
     }

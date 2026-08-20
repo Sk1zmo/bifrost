@@ -242,23 +242,11 @@ impl Node {
         // Restore aliases and history before anything can observe the node, so
         // the first frame the dashboard draws is already correct.
         registry.apply_saved_aliases(&config.aliases).await;
-        compute
-            .trust
-            .load(
-                config
-                    .compute_tokens
-                    .iter()
-                    .map(|(node_id, token)| crate::compute::TrustedPeer {
-                        node_id: node_id.clone(),
-                        display_name: node_id.clone(),
-                        token: token.clone(),
-                        paired_at: Utc::now(),
-                        last_used: None,
-                        jobs_run: 0,
-                    })
-                    .collect(),
-            )
-            .await;
+        // Only the inbound half. `compute_tokens` holds tokens this machine
+        // presents to *others*; loading those here would mean that pairing
+        // with a device silently let that device use this one, which is the
+        // exact opposite of what the person who typed the code agreed to.
+        compute.trust.load(config.compute_trusted.clone()).await;
         match store.load_recent_chat(HISTORY_ON_START).await {
             Ok(history) => {
                 for message in history {
@@ -423,6 +411,13 @@ impl Node {
             let scheduler = node.clone();
             let shutdown = shutdown_tx.subscribe();
             tokio::spawn(scheduler.run_scheduler(shutdown));
+        }
+
+        // Keep the list of devices allowed to use this one on disk.
+        {
+            let keeper = node.clone();
+            let shutdown = shutdown_tx.subscribe();
+            tokio::spawn(keeper.persist_trust(shutdown));
         }
 
         // Persist chat as it arrives, and keep presence fresh.
@@ -927,6 +922,30 @@ impl Node {
     /// Runs as a background task for the life of the node. Each job is
     /// dispatched on its own task so a long render does not hold up an
     /// interactive prompt queued behind it.
+    /// Write the trust store to disk whenever a device is granted or loses
+    /// access, so approval survives a restart and a revocation is not undone
+    /// by one.
+    async fn persist_trust(self, mut shutdown: broadcast::Receiver<()>) {
+        let mut changes = self.compute.trust.changes();
+        loop {
+            tokio::select! {
+                result = changes.changed() => {
+                    if result.is_err() {
+                        return;
+                    }
+                    let trusted = self.compute.trust.list().await;
+                    if let Err(e) = self
+                        .mutate_config(move |config| config.compute_trusted = trusted)
+                        .await
+                    {
+                        tracing::error!(error = %format!("{e:#}"), "cannot save paired devices");
+                    }
+                }
+                _ = shutdown.recv() => return,
+            }
+        }
+    }
+
     async fn run_scheduler(self, mut shutdown: broadcast::Receiver<()>) {
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
 
@@ -972,7 +991,13 @@ impl Node {
         };
 
         let Some(addr) = addr else {
-            self.orchestrator.requeue(&job.id, &placement.node_id).await;
+            self.orchestrator
+                .requeue(
+                    &job.id,
+                    &placement.node_id,
+                    format!("{} is no longer reachable", placement.display_name),
+                )
+                .await;
             return;
         };
 
@@ -1043,7 +1068,9 @@ impl Node {
                     error = %format!("{e:#}"),
                     "dispatch failed, trying elsewhere"
                 );
-                self.orchestrator.requeue(&job.id, &placement.node_id).await;
+                self.orchestrator
+                    .requeue(&job.id, &placement.node_id, format!("{e:#}"))
+                    .await;
             }
         }
     }
@@ -1126,6 +1153,71 @@ mod tests {
             .await
             .unwrap();
         (node, dir)
+    }
+
+    /// A node on ports nothing else is using, with the config pre-arranged.
+    async fn test_node_with(
+        offset: u16,
+        arrange: impl FnOnce(&mut Config),
+    ) -> (Node, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::generate();
+        config.ports = PortSet::default().offset_by(offset);
+        config.ports.discovery += offset;
+        config.download_dir = dir.path().join("downloads");
+        config.data_dir = dir.path().join("data");
+        arrange(&mut config);
+
+        let node = Node::start(config, dir.path().join("config.json"))
+            .await
+            .unwrap();
+        (node, dir)
+    }
+
+    #[tokio::test]
+    async fn holding_a_token_for_a_device_does_not_let_it_in() {
+        // `compute_tokens` is what this machine presents to others. It was
+        // once loaded as inbound trust too, which quietly made every pairing
+        // mutual: pair with someone's workstation and, after a restart, that
+        // workstation could run whatever it liked on your laptop. The person
+        // who read out a code agreed to one direction only.
+        let (node, _dir) = test_node_with(240, |config| {
+            config
+                .compute_tokens
+                .insert("their-node".into(), "the-token-they-issued-me".into());
+        })
+        .await;
+
+        let refused = node
+            .compute
+            .trust
+            .authorise("their-node", Some("the-token-they-issued-me"))
+            .await;
+
+        assert!(refused.is_err(), "an outbound token must not grant entry");
+        assert!(node.compute.trust.list().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn devices_granted_access_are_remembered_across_a_restart() {
+        let (node, _dir) = test_node_with(250, |config| {
+            config.compute_trusted.push(crate::compute::TrustedPeer {
+                node_id: "workshop-nuc".into(),
+                display_name: "workshop-nuc".into(),
+                token: "issued-earlier".into(),
+                paired_at: Utc::now(),
+                last_used: None,
+                jobs_run: 0,
+            });
+        })
+        .await;
+
+        assert!(node
+            .compute
+            .trust
+            .authorise("workshop-nuc", Some("issued-earlier"))
+            .await
+            .is_ok());
     }
 
     #[tokio::test]

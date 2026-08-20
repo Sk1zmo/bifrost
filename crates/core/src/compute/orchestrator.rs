@@ -38,6 +38,16 @@ use uuid::Uuid;
 use crate::compute::protocol::{Capabilities, JobState};
 use crate::net::peers::Peer;
 
+/// A placement scoring below this cannot actually run the work.
+///
+/// The scale is built so that a node able to run something at all clears
+/// 1000; everything below is a node that lacks the model, the task, or the
+/// GPU it needs.
+const PLACEABLE_SCORE: i64 = 1000;
+
+/// Workers to try before declaring a job unplaceable.
+const MAX_ATTEMPTS: usize = 4;
+
 /// How urgent a piece of work is.
 ///
 /// Ordered so that `Interactive > Normal > Background`, because the queue is a
@@ -166,6 +176,20 @@ pub struct ClusterCapacity {
     pub tasks: Vec<String>,
 }
 
+/// One device offering compute, as the dashboard lists it.
+///
+/// The pooled totals answer "what can the network do"; this answers "which
+/// machine is it on", which is what you need before you can decide to pair
+/// with something, or work out why a model is missing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceCapacity {
+    pub node_id: String,
+    pub display_name: String,
+    /// True for the node serving this dashboard.
+    pub is_self: bool,
+    pub capabilities: Capabilities,
+}
+
 /// Schedules work across the network.
 #[derive(Clone)]
 pub struct Orchestrator {
@@ -282,6 +306,36 @@ impl Orchestrator {
         total.models = models.into_iter().collect();
         total.tasks = tasks.into_iter().collect();
         total
+    }
+
+    /// The same picture broken down by machine, this node first.
+    pub async fn devices(&self) -> Vec<DeviceCapacity> {
+        let inner = self.inner.read().await;
+
+        let mut devices: Vec<DeviceCapacity> = inner
+            .capacity
+            .iter()
+            .map(|(node_id, (display_name, capabilities))| DeviceCapacity {
+                node_id: node_id.clone(),
+                display_name: display_name.clone(),
+                is_self: false,
+                capabilities: capabilities.clone(),
+            })
+            .collect();
+        devices.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+
+        // This node leads the list whether or not it is sharing: seeing it
+        // there switched off is how you discover that it is switched off.
+        devices.insert(
+            0,
+            DeviceCapacity {
+                node_id: self.node_id.clone(),
+                display_name: "This device".to_string(),
+                is_self: true,
+                capabilities: inner.local.clone(),
+            },
+        );
+        devices
     }
 
     /// Choose the best node for a piece of work.
@@ -414,7 +468,9 @@ impl Orchestrator {
         };
 
         let placements = self.plan(&queued.work, &queued.attempts).await;
-        let placement = placements.into_iter().find(|p| p.score >= 1000)?;
+        let placement = placements
+            .into_iter()
+            .find(|p| p.score >= PLACEABLE_SCORE)?;
 
         let mut inner = self.inner.write().await;
         inner.queue.pop_front();
@@ -449,26 +505,57 @@ impl Orchestrator {
     }
 
     /// Put a job back after a worker refused it, so another can be tried.
-    pub async fn requeue(&self, job_id: &str, refused_by: &str) {
+    ///
+    /// `reason` is why that worker would not take it, and it matters: if no
+    /// other device can take the work either, this is what the job fails with.
+    /// A job that quietly returns to a queue nothing will ever drain is the
+    /// worst outcome available — it looks identical to one that is merely
+    /// slow, so the first thing anyone hits (asking a machine they have not
+    /// paired with yet) would show as "queued" indefinitely.
+    pub async fn requeue(&self, job_id: &str, refused_by: &str, reason: String) {
+        // Record the attempt, then release the lock: working out where else it
+        // could go needs `plan`, which takes the same lock to read.
+        let (work, attempts) = {
+            let mut inner = self.inner.write().await;
+            let Some(job) = inner.jobs.get_mut(job_id) else {
+                return;
+            };
+            job.attempts.push(refused_by.to_string());
+            job.worker = None;
+            job.worker_name = None;
+            (job.work.clone(), job.attempts.clone())
+        };
+
+        // Give up rather than circling a network that has nothing able to take
+        // the work.
+        let elsewhere = if attempts.len() >= MAX_ATTEMPTS {
+            Vec::new()
+        } else {
+            self.plan(&work, &attempts).await
+        };
+        let placeable = elsewhere.iter().any(|p| p.score >= PLACEABLE_SCORE);
+
         let mut inner = self.inner.write().await;
+        // Drop any entry still queued under this id, so a requeue can never
+        // leave two copies of one job racing each other.
+        inner.queue.retain(|queued| queued.id != job_id);
+
         let Some(job) = inner.jobs.get_mut(job_id) else {
             return;
         };
+        // It may have been cancelled while the lock was down.
+        if matches!(job.state, JobState::Cancelled) {
+            return;
+        }
 
-        job.attempts.push(refused_by.to_string());
-        job.state = JobState::Queued;
-        job.worker = None;
-        job.worker_name = None;
-
-        // Give up rather than looping forever round a network that has nothing
-        // able to take the work.
-        if job.attempts.len() >= 4 {
+        if !placeable {
             job.state = JobState::Failed;
-            job.error = Some("no device on the network could take this work".into());
+            job.error = Some(reason);
             job.finished_at = Some(Utc::now());
             return;
         }
 
+        job.state = JobState::Queued;
         let requeued = job.clone();
         let priority = requeued.priority;
         let position = inner.queue.iter().position(|q| q.priority < priority);
@@ -713,10 +800,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_refused_job_is_tried_elsewhere_then_given_up_on() {
+    async fn a_refused_job_fails_with_the_reason_once_nowhere_is_left() {
+        // One capable node, which then refuses. Nowhere else can take the work,
+        // so the job must fail rather than return to a queue that will never
+        // drain — and it must fail carrying the refusal, because "not paired"
+        // is the whole answer and the alternative shows as "queued" forever.
         let orchestrator = Orchestrator::new("me".into(), true);
         orchestrator
-            .set_local_capabilities(capable(false, 1, 0))
+            .set_local_capabilities(capable(true, 1, 0))
             .await;
 
         let id = orchestrator
@@ -732,15 +823,46 @@ mod tests {
             .await
             .unwrap();
 
-        for attempt in 0..4 {
-            orchestrator
-                .requeue(&id, &format!("worker-{attempt}"))
-                .await;
-        }
+        orchestrator
+            .requeue(&id, "me", "this device has not been paired".into())
+            .await;
 
         let job = orchestrator.job(&id).await.unwrap();
         assert_eq!(job.state, JobState::Failed);
-        assert!(job.error.unwrap().contains("no device"));
+        assert_eq!(job.error.as_deref(), Some("this device has not been paired"));
+        assert!(orchestrator.next_ready().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_refused_job_moves_to_another_device() {
+        let orchestrator = Orchestrator::new("me".into(), true);
+        orchestrator
+            .set_local_capabilities(capable(true, 1, 0))
+            .await;
+        orchestrator
+            .observe_peers(&[peer("other", "other", capable(true, 1, 0))])
+            .await;
+
+        let id = orchestrator
+            .submit(
+                Work::Inference {
+                    model: "llama3.2:3b".into(),
+                    prompt: "hi".into(),
+                    system: None,
+                    temperature: None,
+                },
+                Priority::Normal,
+            )
+            .await
+            .unwrap();
+
+        orchestrator.requeue(&id, "other", "busy".into()).await;
+
+        // Still live, and the next placement avoids the device that refused.
+        let job = orchestrator.job(&id).await.unwrap();
+        assert_eq!(job.state, JobState::Queued);
+        let (_, placement) = orchestrator.next_ready().await.expect("placed elsewhere");
+        assert_eq!(placement.node_id, "me");
     }
 
     #[tokio::test]

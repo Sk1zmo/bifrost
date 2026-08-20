@@ -226,7 +226,8 @@ nav.tabs::-webkit-scrollbar { display: none; }
 .tooltip .t-val { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-1); }
 
 /* ═══ Peers ═══ */
-.peer-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
+.peer-grid { display: grid; gap: 12px; align-items: start;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
 .peer {
   background: var(--surface-1); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px 16px;
@@ -330,6 +331,89 @@ table.data th { color: var(--text-2); font-weight: 600; }
 
 .empty { padding: 26px 10px; text-align: center; color: var(--text-3); font-size: 13.5px; }
 .hidden { display: none !important; }
+
+/* == Compute ===============================================================
+   Job state is never colour alone: every state ships an icon and its name.
+   ======================================================================== */
+.switch-row {
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.switch-row:first-of-type { border-top: 0; padding-top: 0; }
+.switch-row .switch-text { flex: 1; min-width: 0; }
+.switch-row .switch-text strong { font-size: 13.5px; font-weight: 600; }
+.switch-row .switch-text p { margin: 3px 0 0; font-size: 12.5px; color: var(--text-2); }
+.switch {
+  position: relative; flex: none; width: 42px; height: 24px; margin-top: 2px;
+  border-radius: 12px; border: 1px solid var(--border-firm); background: var(--surface-3);
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--surface-1); box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  transition: transform .15s;
+}
+.switch[aria-checked="true"] { background: var(--series-1); border-color: var(--series-1); }
+.switch[aria-checked="true"]::after { transform: translateX(18px); background: #fff; }
+.switch:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+
+.code-display {
+  font-size: 34px; font-weight: 600; letter-spacing: .16em;
+  font-variant-numeric: tabular-nums; text-align: center; padding: 14px 0 6px;
+}
+.code-hint { text-align: center; font-size: 12.5px; color: var(--text-2); padding-bottom: 8px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--surface-3);
+  font-size: 12px; color: var(--text-2); max-width: 100%;
+}
+.chip .chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .chip-value { flex: none; white-space: nowrap; color: var(--text-1); font-variant-numeric: tabular-nums; }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--series-1); }
+.chip.task .dot { background: var(--series-2); }
+.chip.gpu { border-color: color-mix(in srgb, var(--series-1) 45%, transparent); color: var(--text-1); }
+
+.cap-group + .cap-group { margin-top: 11px; }
+.cap-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-3); }
+
+.state {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+  font-weight: 500; flex: none;
+}
+.state svg { width: 13px; height: 13px; flex: none; }
+.state.queued    { color: var(--text-2); }
+.state.running   { color: var(--series-1); }
+.state.finished  { color: var(--good-text); }
+.state.failed, .state.cancelled { color: var(--critical); }
+.state.running svg { animation: spin 1.4s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .state.running svg { animation: none; } }
+
+.job { border-top: 1px solid var(--border); padding: 11px 0; }
+.rows .job:first-child { border-top: 0; }
+.job-head { display: flex; align-items: center; gap: 10px; }
+.job-title { font-size: 13.5px; font-weight: 500; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.job-meta { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums;
+  margin-left: auto; flex: none; }
+.job-out {
+  margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--surface-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 260px; overflow-y: auto;
+}
+.job-out.err { color: var(--critical); }
+.placement {
+  margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--surface-3); font-size: 12.5px; color: var(--text-2);
+  border-left: 2px solid var(--series-1);
+}
+textarea.field { min-height: 92px; resize: vertical; line-height: 1.5; }
+.run-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-top: 12px; }
+.run-controls > div { flex: 1; min-width: 150px; }
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
@@ -400,6 +484,22 @@ table.data th { color: var(--text-2); font-weight: 600; }
     <rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8M12 17v4M9 9.5h.01M15 9.5h.01"/></symbol>
   <symbol id="i-device" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
     <rect x="3" y="5" width="18" height="14" rx="2"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+    <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 6 9 17l-5-5"/>
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+    <path d="M18 6 6 18M6 6l12 12"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+  </symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+    <path d="M8 5.5v13l11-6.5z"/>
+  </symbol>
   <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
     <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></symbol>
   <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -446,6 +546,7 @@ table.data th { color: var(--text-2); font-weight: 600; }
     <button class="tab" role="tab" data-panel="chat" aria-selected="false">Chat</button>
     <button class="tab" role="tab" data-panel="files" aria-selected="false">Files<span class="badge" id="badge-files">0</span></button>
     <button class="tab" role="tab" data-panel="calls" aria-selected="false">Calls</button>
+    <button class="tab" role="tab" data-panel="compute" aria-selected="false">Compute<span class="badge" id="badge-compute">0</span></button>
     <button class="tab" role="tab" data-panel="settings" aria-selected="false">Settings</button>
   </nav>
 </header>
@@ -597,7 +698,154 @@ table.data th { color: var(--text-2); font-weight: 600; }
     </div>
   </section>
 
-  <!-- ══ Settings ══ -->
+  <!-- == Compute == -->
+  <section class="panel" id="panel-compute" role="tabpanel">
+
+    <div class="hero">
+      <div class="hero-figure" id="cap-nodes">&mdash;</div>
+      <div class="hero-label" id="cap-nodes-label">devices sharing their hardware</div>
+    </div>
+
+    <div class="tiles" style="margin-top:16px">
+      <div class="tile">
+        <div class="label">Accelerators</div>
+        <div class="value" id="cap-accel">&mdash;</div>
+        <div class="sub" id="cap-vram">&mdash;</div>
+      </div>
+      <div class="tile">
+        <div class="label">CPU threads</div>
+        <div class="value" id="cap-threads">&mdash;</div>
+        <div class="sub">offered to the network</div>
+      </div>
+      <div class="tile">
+        <div class="label">Memory</div>
+        <div class="value" id="cap-ram">&mdash;</div>
+        <div class="sub">offered to the network</div>
+      </div>
+      <div class="tile">
+        <div class="label">Free slots</div>
+        <div class="value" id="cap-slots">&mdash;</div>
+        <div class="sub" id="cap-busy">&mdash;</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-head">
+        <h2>Run something</h2>
+        <span class="note">the network picks where</span>
+      </div>
+
+      <label class="lab" for="run-what">Model or task</label>
+      <select class="field" id="run-what">
+        <option value="">Nothing available yet</option>
+      </select>
+
+      <div id="run-prompt-wrap" style="margin-top:12px">
+        <label class="lab" for="run-prompt">Prompt</label>
+        <textarea class="field" id="run-prompt" placeholder="Ask it something..."></textarea>
+      </div>
+
+      <div id="run-params-wrap" class="hidden" style="margin-top:12px">
+        <label class="lab" for="run-params">Parameters</label>
+        <input class="field" id="run-params" autocomplete="off"
+               placeholder="scene=/data/city.blend  output=/tmp/frame">
+        <p style="margin:5px 0 0;font-size:12px;color:var(--text-3)">
+          <code>name=value</code> pairs separated by spaces. They become
+          arguments to the task the owner declared &mdash; never a shell command.
+        </p>
+      </div>
+
+      <div class="run-controls">
+        <div>
+          <label class="lab" for="run-priority">Priority</label>
+          <select class="field" id="run-priority">
+            <option value="interactive">Interactive &mdash; I am waiting</option>
+            <option value="normal" selected>Normal</option>
+            <option value="background">Background &mdash; whenever</option>
+          </select>
+        </div>
+        <button class="btn primary" id="run-go" style="flex:none">
+          <svg width="13" height="13" aria-hidden="true" style="vertical-align:-1px;margin-right:5px"><use href="#i-play"/></svg>Run
+        </button>
+      </div>
+
+      <div class="placement hidden" id="run-placement"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Jobs</h2>
+        <span class="note" id="jobs-note">&mdash;</span>
+      </div>
+      <div class="rows" id="jobs"><div class="empty">Nothing has been run yet.</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>What each device offers</h2>
+        <span class="note" id="devices-note">&mdash;</span>
+      </div>
+      <div class="peer-grid" id="compute-devices"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Sharing</h2></div>
+
+      <div class="switch-row">
+        <div class="switch-text">
+          <strong>Share this device&rsquo;s resources</strong>
+          <p>Let paired devices run models and declared tasks on this machine.
+             Off by default &mdash; it costs your electricity, memory and time.</p>
+        </div>
+        <button class="switch" id="toggle-sharing" role="switch"
+                aria-checked="false" aria-label="Share this device's resources"></button>
+      </div>
+
+      <div class="switch-row">
+        <div class="switch-text">
+          <strong>Place work across the network</strong>
+          <p>Send work you submit to whichever device suits it best. Turn this
+             off to keep everything on this machine.</p>
+        </div>
+        <button class="switch" id="toggle-orchestrator" role="switch"
+                aria-checked="false" aria-label="Place work across the network"></button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Paired devices</h2>
+        <span class="note">only these may use this machine</span>
+      </div>
+
+      <div id="pair-code-wrap" class="hidden">
+        <div class="code-display" id="pair-code">&mdash;</div>
+        <div class="code-hint" id="pair-code-hint">Type this on the other device.</div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <button class="btn" id="pair-begin">Show a code</button>
+      </div>
+
+      <div class="rows" id="trusted"><div class="empty">No device has been paired.</div></div>
+
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
+        <label class="lab" for="pair-peer">Use another device&rsquo;s hardware</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <select class="field" id="pair-peer" style="flex:2;min-width:160px"></select>
+          <input class="field" id="pair-code-input" style="flex:1;min-width:110px"
+                 inputmode="numeric" autocomplete="off" maxlength="6" placeholder="Code">
+          <button class="btn primary" id="pair-submit" style="flex:none">Pair</button>
+        </div>
+        <p style="margin:8px 0 0;font-size:12px;color:var(--text-3)">
+          Ask that device to show a code, then type it here. Once paired, it stays
+          paired until you revoke it.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- == Settings == -->
   <section class="panel" id="panel-settings" role="tabpanel">
     <div class="grid cols-2">
       <div class="card" id="device-card" hidden>
@@ -666,6 +914,9 @@ const state = {
   net: [],            // { t, rx, tx } — rolling window for the throughput chart
   activeCall: null,
   connected: false,
+  // The compute picture, fetched separately: it is a different shape from the
+  // snapshot and most people never open the tab.
+  compute: null,
   // The companion device this browser is, if it has joined. Null means the
   // page is simply viewing the machine that serves it.
   device: null,
@@ -852,6 +1103,7 @@ function render() {
   renderTransfers(s);
   renderCalls(s);
   renderPeerSelects(s);
+  renderPairTargets(s);
   renderSettings(s);
 }
 
@@ -1189,6 +1441,354 @@ function renderSettings(s) {
      </div></div>`).join("");
 }
 
+/* ═══ Compute ═════════════════════════════════════════════════════════════
+   The compute picture is fetched on its own rather than folded into the
+   snapshot: it costs a walk of every peer's advertised capabilities, and the
+   great majority of dashboard viewers never open this tab. It refreshes while
+   the tab is open, and while any job of ours is still live — a running job you
+   cannot see finish is worse than a spare request every two seconds.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const STATE_ICON = {
+  queued:    "i-clock",
+  running:   "i-clock",
+  finished:  "i-check",
+  failed:    "i-x",
+  cancelled: "i-x",
+};
+
+function stateBadge(name) {
+  const key = String(name || "queued").toLowerCase();
+  const icon = STATE_ICON[key] || "i-clock";
+  const label = key.charAt(0).toUpperCase() + key.slice(1);
+  return `<span class="state ${esc(key)}"><svg aria-hidden="true"><use href="#${icon}"/></svg>${esc(label)}</span>`;
+}
+
+const isLive = (job) => job.state === "queued" || job.state === "running";
+
+function computeIsInteresting() {
+  const live = state.compute?.jobs?.some(isLive);
+  const mine = state.compute?.running_here?.length > 0;
+  return $("panel-compute").classList.contains("active") || live || mine;
+}
+
+async function refreshCompute() {
+  try {
+    state.compute = await api("/api/compute");
+    renderCompute();
+  } catch { /* the poll reports the connection state */ }
+}
+
+function renderCompute() {
+  const c = state.compute;
+  if (!c) return;
+  const cap = c.capacity || {};
+
+  const live = (c.jobs || []).filter(isLive).length + (c.running_here || []).length;
+  const badge = $("badge-compute");
+  badge.textContent = live;
+  badge.style.visibility = live ? "visible" : "hidden";
+
+  $("cap-nodes").textContent = fmtCount(cap.nodes || 0);
+  $("cap-nodes-label").textContent = cap.nodes === 1
+    ? "device sharing its hardware" : "devices sharing their hardware";
+  $("cap-accel").textContent   = fmtCount(cap.accelerators || 0);
+  $("cap-vram").textContent    = cap.total_vram_mb
+    ? `${fmtMBasGB(cap.total_vram_mb)} of video memory` : "no GPU offered yet";
+  $("cap-threads").textContent = fmtCount(cap.cpu_threads || 0);
+  $("cap-ram").textContent     = fmtMBasGB(cap.ram_mb || 0);
+  $("cap-slots").textContent   = fmtCount(cap.free_slots || 0);
+  $("cap-busy").textContent    = cap.running_jobs
+    ? `${cap.running_jobs} job${cap.running_jobs === 1 ? "" : "s"} running`
+    : "nothing running";
+
+  setSwitch($("toggle-sharing"), c.enabled);
+  setSwitch($("toggle-orchestrator"), c.orchestrator_enabled);
+
+  renderRunChoices(cap);
+  renderJobs(c);
+  renderComputeDevices(c.devices || []);
+  renderTrusted(c.trusted || []);
+  renderPairCode(c.pairing_code);
+}
+
+function setSwitch(el, on) {
+  el.setAttribute("aria-checked", on ? "true" : "false");
+}
+
+/// One select holding both models and tasks, because the question a person is
+/// answering is "what do I want to run", not "which subsystem runs it".
+function renderRunChoices(cap) {
+  const select = $("run-what");
+  const previous = select.value;
+
+  const group = (label, names, prefix) => names.length
+    ? `<optgroup label="${label}">` +
+      names.map((n) => `<option value="${esc(prefix + ":" + n)}">${esc(n)}</option>`).join("") +
+      `</optgroup>`
+    : "";
+
+  const html = group("Models", cap.models || [], "model")
+             + group("Tasks", cap.tasks || [], "task");
+
+  select.innerHTML = html || `<option value="">Nothing available yet</option>`;
+  if ([...select.options].some((o) => o.value === previous)) select.value = previous;
+  reflectRunKind();
+}
+
+/// A prompt makes sense for a model; named parameters make sense for a task.
+function reflectRunKind() {
+  const isTask = $("run-what").value.startsWith("task:");
+  $("run-prompt-wrap").classList.toggle("hidden", isTask);
+  $("run-params-wrap").classList.toggle("hidden", !isTask);
+}
+
+function renderJobs(c) {
+  const container = $("jobs");
+
+  // Ours, newest first, then work this machine is doing for other people —
+  // which is the only visible evidence that sharing is actually being used.
+  const mine = [...(c.jobs || [])].reverse().map((job) => {
+    const worker = job.worker_name || job.worker || "…";
+    const output = job.error || job.output;
+    return `
+      <div class="job">
+        <div class="job-head">
+          ${stateBadge(job.state)}
+          <span class="job-title">${esc(labelOfWork(job.work))}</span>
+          <span class="job-meta">${esc(worker)} · ${fmtDuration(jobSeconds(job))}</span>
+          ${isLive(job) ? `<button class="btn small danger" data-cancel="${esc(job.id)}">Stop</button>` : ""}
+        </div>
+        ${output ? `<pre class="job-out${job.error ? " err" : ""}">${esc(output)}</pre>` : ""}
+      </div>`;
+  });
+
+  const theirs = (c.running_here || []).map((job) => `
+      <div class="job">
+        <div class="job-head">
+          ${stateBadge(job.state)}
+          <span class="job-title">${esc(job.kind)}</span>
+          <span class="job-meta">here, for ${esc(nameOf(job.requester))}</span>
+        </div>
+      </div>`);
+
+  const all = [...theirs, ...mine];
+  container.innerHTML = all.length ? all.join("")
+    : `<div class="empty">Nothing has been run yet.</div>`;
+
+  const total = all.length;
+  $("jobs-note").textContent = total
+    ? `${total} job${total === 1 ? "" : "s"}` : "—";
+
+  container.querySelectorAll("[data-cancel]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await api(`/api/compute/job/${encodeURIComponent(button.dataset.cancel)}`,
+                  { method: "DELETE" });
+        toast("Stopped");
+        refreshCompute();
+      } catch (e) { toast(e.message); }
+    });
+  });
+}
+
+function labelOfWork(work) {
+  if (!work) return "job";
+  return work.kind === "inference" ? work.model : work.name;
+}
+
+function jobSeconds(job) {
+  const from = new Date(job.started_at || job.submitted_at).getTime();
+  const to = job.finished_at ? new Date(job.finished_at).getTime() : Date.now();
+  return Math.max(0, Math.round((to - from) / 1000));
+}
+
+function renderComputeDevices(devices) {
+  const sharing = devices.filter((d) => d.capabilities.enabled);
+  $("devices-note").textContent = sharing.length
+    ? `${sharing.length} of ${devices.length} sharing`
+    : "none sharing yet";
+
+  $("compute-devices").innerHTML = devices.map((device) => {
+    const caps = device.capabilities || {};
+    const max = Math.max(caps.max_concurrent_jobs || 0, 1);
+    const busy = Math.min(caps.running_jobs || 0, max);
+
+    const chips = (items, className) => items.length
+      ? `<div class="chips">${items.map((t) =>
+          `<span class="chip ${className}"><span class="dot"></span><span class="chip-name">${esc(t)}</span></span>`
+        ).join("")}</div>`
+      : `<div style="font-size:12.5px;color:var(--text-3);margin-top:4px">none</div>`;
+
+    const gpus = (caps.gpus || []).map((g) =>
+      `<span class="chip gpu"><span class="chip-name">${esc(g.name)}</span>${
+        g.vram_mb ? `<span class="chip-value">${esc(fmtMBasGB(g.vram_mb))}</span>` : ""
+      }</span>`).join("");
+
+    return `
+      <div class="peer${caps.enabled ? "" : " offline"}">
+        <div class="peer-head">
+          <div class="peer-icon"><svg width="17" height="17" aria-hidden="true"><use href="#i-chip"/></svg></div>
+          <div class="peer-id">
+            <div class="peer-name">${esc(device.display_name)}</div>
+            <div class="peer-meta">${caps.cpu_threads || 0} threads · ${fmtMBasGB(caps.ram_mb || 0)}</div>
+          </div>
+          <span class="status ${caps.enabled ? "on" : "off"}"><span class="dot"></span>${
+            caps.enabled ? "Sharing" : "Not sharing"}</span>
+        </div>
+
+        ${gpus ? `<div class="chips" style="margin-bottom:10px">${gpus}</div>` : ""}
+
+        ${meter("Slots", (busy / max) * 100, `${busy}/${max}`)}
+
+        <div class="cap-group" style="margin-top:12px">
+          <div class="cap-label">Models</div>
+          ${chips((caps.models || []).map((m) => m.name), "model")}
+        </div>
+        <div class="cap-group">
+          <div class="cap-label">Tasks</div>
+          ${chips((caps.tasks || []).map((t) => t.name), "task")}
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function renderTrusted(trusted) {
+  const container = $("trusted");
+  container.innerHTML = trusted.length ? trusted.map((peer) => `
+    <div class="row">
+      <div class="row-main">
+        <div class="row-title">${esc(peer.display_name)}</div>
+        <div class="row-sub">paired ${fmtTime(peer.paired_at)} · ${
+          peer.jobs_run ? `${peer.jobs_run} job${peer.jobs_run === 1 ? "" : "s"} run` : "not used yet"}</div>
+      </div>
+      <button class="btn small danger" data-revoke="${esc(peer.node_id)}">Revoke</button>
+    </div>`).join("")
+    : `<div class="empty">No device has been paired.</div>`;
+
+  container.querySelectorAll("[data-revoke]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        const result = await post("/api/compute/revoke", { peer: button.dataset.revoke });
+        toast(result.text);
+        refreshCompute();
+      } catch (e) { toast(e.message); }
+    });
+  });
+}
+
+function renderPairCode(code) {
+  const wrap = $("pair-code-wrap");
+  if (!code) { wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  $("pair-code").textContent = code.replace(/(\d{3})(\d{3})/, "$1 $2");
+}
+
+/// Only devices actually offering compute can be paired with.
+function renderPairTargets(s) {
+  const select = $("pair-peer");
+  const previous = select.value;
+  const offering = s.peers.filter((p) => p.online && p.compute && p.compute.enabled);
+
+  select.innerHTML = offering.length
+    ? offering.map((p) =>
+        `<option value="${esc(p.node_id)}">${esc(p.alias || p.username)}</option>`).join("")
+    : `<option value="">No device is offering compute</option>`;
+  if ([...select.options].some((o) => o.value === previous)) select.value = previous;
+}
+
+/* ─── Compute controls ─────────────────────────────────────────────────── */
+
+$("run-what").addEventListener("change", reflectRunKind);
+
+$("run-go").addEventListener("click", async () => {
+  const choice = $("run-what").value;
+  if (!choice) { toast("Nothing on this network can run work yet"); return; }
+
+  const [kind, ...rest] = choice.split(":");
+  const name = rest.join(":");                 // model names contain colons
+  const body = { priority: $("run-priority").value };
+
+  if (kind === "model") {
+    const prompt = $("run-prompt").value.trim();
+    if (!prompt) { toast("Type a prompt first"); return; }
+    body.model = name;
+    body.prompt = prompt;
+  } else {
+    body.task = name;
+    body.parameters = parseParameters($("run-params").value);
+  }
+
+  const button = $("run-go");
+  button.disabled = true;
+  try {
+    const result = await post("/api/compute/run", body);
+    const placement = $("run-placement");
+    placement.classList.remove("hidden");
+    placement.textContent = result.text;
+    await refreshCompute();
+  } catch (e) {
+    const placement = $("run-placement");
+    placement.classList.remove("hidden");
+    placement.textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/// `name=value` pairs. Deliberately not a shell: whitespace separates, and a
+/// value is taken literally, because these end up as individual arguments.
+function parseParameters(text) {
+  const parameters = {};
+  for (const token of text.trim().split(/\s+/)) {
+    if (!token) continue;
+    const at = token.indexOf("=");
+    if (at > 0) parameters[token.slice(0, at)] = token.slice(at + 1);
+  }
+  return parameters;
+}
+
+for (const [id, path, label] of [
+  ["toggle-sharing", "/api/compute/toggle", "sharing"],
+  ["toggle-orchestrator", "/api/compute/orchestrator", "orchestrator"],
+]) {
+  $(id).addEventListener("click", async () => {
+    const element = $(id);
+    const next = element.getAttribute("aria-checked") !== "true";
+    setSwitch(element, next);                  // optimistic; corrected on refresh
+    try {
+      const result = await post(path, { enabled: next });
+      toast(result.text);
+    } catch (e) {
+      setSwitch(element, !next);
+      toast(e.message);
+    }
+    refreshCompute();
+  });
+}
+
+$("pair-begin").addEventListener("click", async () => {
+  try {
+    const result = await post("/api/compute/pair/begin", {});
+    renderPairCode(result.code);
+    $("pair-code-hint").textContent =
+      `Type this on the other device within ${Math.round(result.expires_in_secs / 60)} minutes.`;
+  } catch (e) { toast(e.message); }
+});
+
+$("pair-submit").addEventListener("click", async () => {
+  const peer = $("pair-peer").value;
+  const code = $("pair-code-input").value.trim();
+  if (!peer) { toast("No device is offering compute"); return; }
+  if (!code) { toast("Type the code shown on that device"); return; }
+  try {
+    const result = await post("/api/compute/pair/with", { peer, code });
+    toast(result.text);
+    $("pair-code-input").value = "";
+    refreshCompute();
+  } catch (e) { toast(e.message); }
+});
+
 function pushLog(level, text) {
   state.log.unshift({ level, text, at: new Date() });
   state.log = state.log.slice(0, 120);
@@ -1217,6 +1817,7 @@ async function refresh() {
 
     setConnected(true);
     render();
+    if (computeIsInteresting()) refreshCompute();
   } catch (e) {
     setConnected(false);
   }
@@ -1470,15 +2071,32 @@ async function pumpAudio() {
 }
 
 /* ═══ Chrome ══════════════════════════════════════════════════════════════ */
+/// Show one tab. The name goes in the URL fragment so a reload, a bookmark or
+/// a link lands back where you were rather than on Overview.
+function showPanel(name, updateHash = true) {
+  const tab = document.querySelector(`.tab[data-panel="${name}"]`);
+  const panel = $(`panel-${name}`);
+  if (!tab || !panel) return;
+
+  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", "false"));
+  document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+  tab.setAttribute("aria-selected", "true");
+  panel.classList.add("active");
+
+  if (updateHash) history.replaceState(null, "", `#${name}`);
+  if (name === "files") refreshDownloads();
+  if (name === "compute") refreshCompute();
+}
+
 document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", "false"));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-    tab.setAttribute("aria-selected", "true");
-    $(`panel-${tab.dataset.panel}`).classList.add("active");
-    if (tab.dataset.panel === "files") refreshDownloads();
-  });
+  tab.addEventListener("click", () => showPanel(tab.dataset.panel));
 });
+
+window.addEventListener("hashchange", () => {
+  showPanel(location.hash.slice(1) || "overview", false);
+});
+
+if (location.hash.length > 1) showPanel(location.hash.slice(1), false);
 
 $("net-table-toggle").addEventListener("click", () => {
   const table = $("net-table-wrap");
