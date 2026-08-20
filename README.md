@@ -79,6 +79,7 @@ docker compose up -d
 ```sh
 bifrost                    # node + web dashboard + terminal dashboard
 bifrost serve              # headless, for a server or a service
+bifrost qr                 # print the dashboard address + a QR code for your phone
 bifrost doctor             # diagnose why peers are not appearing
 bifrost peers              # list devices, from a script
 bifrost chat "deploy done" # broadcast, from a script
@@ -106,7 +107,7 @@ Inside either dashboard:
 
 ## Your phone
 
-**No app needed.** Open a node's dashboard address in any mobile browser and you get the full interface: peers, chat, file upload and download, telemetry, and push-to-talk voice. Add it to your home screen and it behaves like an app.
+**No app needed.** Run `bifrost qr` to print the address and a scannable QR code, point your phone's camera at it, and you get the full interface in the browser: peers, chat, file upload and download, telemetry, and push-to-talk voice. Add it to your home screen and it behaves like an app.
 
 **As a real peer.** To make the phone itself a node — discovering, beaconing and transferring directly — build one of the native clients:
 

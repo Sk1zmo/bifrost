@@ -29,7 +29,7 @@ use clap::{Parser, Subcommand};
                   server: nodes find each other by broadcasting on the LAN and talk directly.\n\n\
                   Run `bifrost` on two machines on the same Wi-Fi and they will see each \
                   other within a few seconds.",
-    after_help = "Open the printed dashboard address on a phone to control a node from it."
+    after_help = "Run `bifrost qr` to print a QR code your phone's camera can scan."
 )]
 struct Cli {
     /// Path to config.json (defaults to ~/.bifrost/config.json).
@@ -79,6 +79,8 @@ enum Command {
     },
     /// Start a node with only the terminal dashboard.
     Tui,
+    /// Print the dashboard address and a QR code to scan with a phone.
+    Qr,
     /// Check the network, ports and configuration, and report what is wrong.
     Doctor,
     /// List devices seen by the node running on this machine.
@@ -133,6 +135,9 @@ async fn run(mut cli: Cli) -> Result<()> {
     }
     if let Command::Config = &command {
         return show_config(&cli);
+    }
+    if let Command::Qr = &command {
+        return show_qr(&cli);
     }
     if let Command::Service { action } = &command {
         return service::run(action.clone());
@@ -385,4 +390,63 @@ fn show_config(cli: &Cli) -> Result<()> {
     println!();
     println!("{}", serde_json::to_string_pretty(&config)?);
     Ok(())
+}
+
+/// Print the dashboard address and a QR code for it.
+///
+/// Deliberately does not need a running node: it reads the port from the
+/// config and the address from the network, so it can be run in a second
+/// terminal beside a node that is already busy drawing its dashboard. The
+/// terminal dashboard takes over the screen, which is exactly why the startup
+/// banner cannot be the only place the QR code appears.
+fn show_qr(cli: &Cli) -> Result<()> {
+    let config = load_config(cli)?;
+    let ip = iface::local_ipv4();
+    let url = format!("http://{}:{}", ip, config.ports.web);
+
+    println!();
+    if ip.is_loopback() {
+        println!("  This machine has no LAN address, so no other device can reach it.");
+        println!("  Connect to Wi-Fi or plug in a cable, then try again.");
+        println!("  Run `bifrost doctor` for details.");
+        println!();
+        return Ok(());
+    }
+
+    println!("  Dashboard  {url}");
+    println!();
+
+    match qr::render(&url) {
+        Ok(code) => {
+            for line in code.lines() {
+                println!("  {line}");
+            }
+        }
+        Err(e) => println!("  (could not draw a QR code: {e})"),
+    }
+
+    println!("  Scan with your phone's camera, on the same Wi-Fi.");
+    println!();
+
+    // The address is useless if nothing is serving it, and a QR code that
+    // leads to a connection error is worse than none.
+    if !is_node_running(config.ports.web) {
+        println!(
+            "  Note: no node is answering on port {} yet.",
+            config.ports.web
+        );
+        println!("  Start one first, in another terminal:  bifrost");
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Is something serving the dashboard on this port?
+fn is_node_running(port: u16) -> bool {
+    use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+    use std::time::Duration;
+
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok()
 }

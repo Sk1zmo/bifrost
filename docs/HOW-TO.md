@@ -157,16 +157,30 @@ Everything shifts by 10 except discovery, which deliberately stays on 9001 so th
 
 **This is the part with no installation.**
 
-When a node starts it prints:
+Start a node if one is not already running, then in a second terminal:
 
-```
-  Dashboard http://192.168.1.24:9000
-
-  Scan with a phone camera to open the dashboard:
-      [QR code]
+```sh
+bifrost qr
 ```
 
-Point your phone's camera at the QR code, or type the address into any browser. You get the whole interface:
+```
+  Dashboard  http://192.168.1.24:9000
+
+      █▀▀▀▀▀█ █▀▄ ▄█  ▄ █▀▀▀▀▀█
+      █ ███ █ ▄▄▀▄▄█  █ █ ███ █
+      █ ▀▀▀ █ ▀█ ▄▀▀▄▀▀ █ ▀▀▀ █
+      ▀▀▀▀▀▀▀ ▀▄▀ █ ▀▄▀ ▀▀▀▀▀▀▀
+
+  Scan with your phone's camera, on the same Wi-Fi.
+```
+
+Open your phone's camera app, point it at the code, and tap the notification that appears. No QR app is needed — iOS and Android both scan from the camera.
+
+`bifrost serve` prints the same thing at startup. `bifrost` on its own does not, because the terminal dashboard takes over the screen immediately — which is exactly what `bifrost qr` is for. You can run it at any time, in any terminal, whether or not a node is running; it tells you if nothing is answering yet.
+
+If you would rather type it, the address is also in the terminal dashboard's header bar, and under **Settings → Connection** in the web dashboard.
+
+Either way, you get the whole interface:
 
 - every device with live CPU and memory
 - chat, broadcast or private
