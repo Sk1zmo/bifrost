@@ -72,6 +72,11 @@ impl Peer {
             .ok()
     }
 
+    /// Address for the shared compute service.
+    pub fn compute_addr(&self) -> Option<SocketAddr> {
+        format!("{}:{}", self.ip, self.ports.compute).parse().ok()
+    }
+
     /// URL of this peer's own web dashboard.
     pub fn dashboard_url(&self) -> String {
         format!("http://{}:{}", self.ip, self.ports.web)

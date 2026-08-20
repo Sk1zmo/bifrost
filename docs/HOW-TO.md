@@ -14,9 +14,10 @@ A guide from nothing installed to every device on your network connected.
 8. [Watch the whole network](#8-watch-the-whole-network)
 9. [Keep it running](#9-keep-it-running)
 10. [Put a phone on the network as a real peer](#10-put-a-phone-on-the-network-as-a-real-peer)
-11. [Scripting and automation](#11-scripting-and-automation)
-12. [Settings](#12-settings)
-13. [When something is wrong](#13-when-something-is-wrong)
+11. [Share GPUs and run work across the network](#10a-sharing-gpus-and-running-work-across-the-network)
+12. [Scripting and automation](#11-scripting-and-automation)
+13. [Settings](#12-settings)
+14. [When something is wrong](#13-when-something-is-wrong)
 
 ---
 
@@ -405,6 +406,56 @@ Full detail in [MOBILE.md](MOBILE.md).
 
 ---
 
+## 10a. Sharing GPUs and running work across the network
+
+This is the part that turns a group of devices into one machine.
+
+**On the machine with the good hardware**, switch sharing on:
+
+```json
+// ~/.bifrost/config.json
+{ "compute_enabled": true, "compute_max_jobs": 2 }
+```
+
+If you have [Ollama](https://ollama.com) installed there, its models are found
+and advertised automatically. To share anything else, declare a task:
+
+```json
+"tasks": {
+  "render": {
+    "command": "blender",
+    "args": ["-b", "{scene}", "-o", "{output}"],
+    "description": "Render a scene",
+    "needs_gpu": true
+  }
+}
+```
+
+**Pair the devices.** On the sharing machine, dashboard → Compute → *Pair a
+device* shows a six-digit code. Enter it on the other machine. Once done it is
+remembered permanently.
+
+**Then use it from anywhere**, including a phone:
+
+```sh
+curl -X POST localhost:9000/api/compute/run      -H 'Content-Type: application/json'      -d '{"model":"llama3.2:3b","prompt":"summarise this","priority":"interactive"}'
+```
+
+```
+Queued for workshop-nuc — 2 slot(s) free · NVIDIA GeForce RTX 4060 Laptop GPU · 8 GB
+```
+
+The orchestrator picked that machine because it had free capacity and a real
+GPU, and it says so. Work is queued by priority, so an interactive prompt
+overtakes an overnight render.
+
+Nothing runs on your hardware until you approve the device, and a peer can
+only ever name a model or a task you declared — never a command.
+
+Full detail, including the security model, in [COMPUTE.md](COMPUTE.md).
+
+---
+
 ## 11. Scripting and automation
 
 The one-shot subcommands talk to the node already running on your machine over its local API, so they are fast and do not start a second node.
@@ -438,6 +489,8 @@ curl -X POST localhost:9000/api/command \
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/api/snapshot` | GET | Everything, in one consistent view |
+| `/api/compute` | GET | The network's pooled GPUs, models, tasks and jobs |
+| `/api/compute/run` | POST | Submit work to the network |
 | `/api/events` | GET | Server-sent event stream |
 | `/api/command` | POST | Run any slash command |
 | `/api/chat` | POST | Send a message |

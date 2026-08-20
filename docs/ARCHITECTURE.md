@@ -19,10 +19,10 @@ One Rust engine, five front ends, one wire protocol.
                       │  owns every service,   │
                       │  one execute() entry   │
                       └───────────┬────────────┘
-     ┌──────────┬──────────┬──────┴─────┬────────────┬──────────┐
-     │ Discovery│ Messaging│ File xfer  │   Voice    │ Telemetry│
-     │ UDP 9001 │ TCP 9002 │  TCP 9003  │ 9004/9005  │  sysinfo │
-     └──────────┴──────────┴────────────┴────────────┴──────────┘
+  ┌──────────┬──────────┬──────┴─────┬──────────┬──────────┬────────┐
+  │ Discovery│ Messaging│ File xfer  │  Voice   │ Telemetry│ Compute│
+  │ UDP 9001 │ TCP 9002 │  TCP 9003  │9004/9005 │  sysinfo │TCP 9006│
+  └──────────┴──────────┴────────────┴──────────┴──────────┴────────┘
 ```
 
 The single most consequential decision is that every front end drives the same
@@ -64,6 +64,13 @@ crates/core/src/
 │   ├── commands.rs   Slash-command parser
 │   ├── presence.rs   Online / away / busy
 │   └── voice.rs      Signalling + UDP audio transport
+├── compute/
+│   ├── protocol.rs   Wire types; what a node advertises it can do
+│   ├── pairing.rs    Who may use this machine, and how they earn it
+│   ├── jobs.rs       Declared tasks: templates the owner wrote
+│   ├── ollama.rs     Bridge to a local model runtime
+│   ├── orchestrator.rs  Pooled capacity, priorities, placement
+│   └── service.rs    The compute service, and its client
 ├── files/transfer.rs Chunked, checksummed transfer
 ├── resources/
 │   ├── telemetry.rs  sysinfo sampling
@@ -207,12 +214,18 @@ Three rules hold throughout:
 
 ---
 
-## Phase 2
+## Scheduling
 
-Phase 1 is connectivity. Phase 2 adds distributed compute, and the hooks exist:
+Every node runs an orchestrator; there is no elected leader. A single
+coordinator would be a single point of failure on a network whose premise is
+that machines come and go — close the coordinating laptop and the cluster
+stops. Each node instead places the work *it* submits, using the capacity
+every node already broadcasts in its beacon. Placement is local, instant, and
+survives any other machine disappearing.
 
-- `SharedResources` already advertises what each node will contribute
-- `Envelope` is externally tagged, so `ComputeTask` and `ComputeResult` are
-  invisible to an older node rather than a parse failure
-- `DataStore` persists arbitrary keyed state, ready for a task queue
-- `PoolTotals` already aggregates the capacity a scheduler would place work on
+Two nodes can choose the same worker simultaneously. That is resolved where it
+must be: the worker enforces its own concurrency limit and refuses the
+surplus, and the submitter falls through to its next candidate. Distributed
+locking would cost far more than the occasional retry.
+
+See [COMPUTE.md](COMPUTE.md) for the placement scoring and the security model.

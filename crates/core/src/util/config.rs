@@ -71,6 +71,13 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub orchestrator_enabled: bool,
 
+    /// Tokens earned by pairing with other devices, keyed by their node id.
+    ///
+    /// Persisted so pairing survives a restart; losing them would mean
+    /// re-reading a code off every machine after every reboot.
+    #[serde(default)]
+    pub compute_tokens: HashMap<String, String>,
+
     /// The tasks this machine will run for others.
     ///
     /// The template is the whole permission: a peer names one of these and
@@ -151,6 +158,7 @@ impl Config {
             compute_require_pairing: true,
             compute_max_jobs: default_max_jobs(),
             orchestrator_enabled: true,
+            compute_tokens: HashMap::new(),
             tasks: HashMap::new(),
         }
     }

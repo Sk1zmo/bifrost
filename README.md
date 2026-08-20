@@ -34,7 +34,8 @@ Run one command on two machines on the same Wi‑Fi and they find each other in 
 | **Voice** | LAN calls — signalling plus a direct UDP audio path |
 | **Two dashboards** | A terminal UI, and a web UI any browser on the network can open |
 | **Phones with no app** | A phone joins from its browser as its own named device, visible to every machine |
-| **Resource sharing** | Each node advertises spare capacity for Phase 2's scheduler |
+| **Shared compute** | Run AI models, renders and simulations on any machine's GPU, placed automatically |
+| **Orchestrator** | Pools every device's GPUs, cores and memory, and schedules work by priority |
 
 Everything stays on your LAN. There is no relay server, no cloud account, and no internet dependency of any kind.
 
@@ -137,6 +138,33 @@ Both link the same Rust core the desktop runs. See [docs/MOBILE.md](docs/MOBILE.
 
 ---
 
+## Sharing real work, not just files
+
+Every node advertises its GPUs, its installed models and the tasks its owner
+has declared. Any device can then run work on any other's hardware — including
+a phone sending a prompt to the desktop with the graphics card.
+
+```sh
+curl -X POST localhost:9000/api/compute/run      -d '{"model":"llama3.2:3b","prompt":"explain TCP backpressure"}'
+```
+
+```
+Queued for workshop-nuc — 2 slot(s) free · NVIDIA GeForce RTX 4060 Laptop GPU · 8 GB
+```
+
+An orchestrator on every node pools the network's capacity and places work by
+priority, so an interactive prompt overtakes an overnight render. There is no
+central coordinator to fail.
+
+**Two rules keep it safe.** A peer names a model or a task and fills in
+placeholders — it can never supply a command line, and there is no shell in
+the execution path. And compute, unlike chat, is closed until you approve a
+device with a six-digit pairing code.
+
+Full detail in [docs/COMPUTE.md](docs/COMPUTE.md).
+
+---
+
 ## How it is built
 
 ```
@@ -151,10 +179,10 @@ Both link the same Rust core the desktop runs. See [docs/MOBILE.md](docs/MOBILE.
                       │      bifrost-core      │
                       │   one Rust engine      │
                       └───────────┬────────────┘
-     ┌──────────┬──────────┬──────┴─────┬────────────┬──────────┐
-     │ Discovery│ Messaging│ File xfer  │   Voice    │ Telemetry│
-     │ UDP 9001 │ TCP 9002 │  TCP 9003  │ 9004/9005  │  sysinfo │
-     └──────────┴──────────┴────────────┴────────────┴──────────┘
+  ┌──────────┬──────────┬──────┴─────┬──────────┬──────────┬────────┐
+  │ Discovery│ Messaging│ File xfer  │  Voice   │ Telemetry│ Compute│
+  │ UDP 9001 │ TCP 9002 │  TCP 9003  │9004/9005 │  sysinfo │TCP 9006│
+  └──────────┴──────────┴────────────┴──────────┴──────────┴────────┘
 ```
 
 One engine, five front ends, one wire protocol. A phone and a server are the same kind of peer.
@@ -179,6 +207,7 @@ Full detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the wire format is 
 | 9003 | TCP | File transfer |
 | 9004 | TCP | Voice signalling |
 | 9005 | UDP | Voice audio |
+| 9006 | TCP | Shared compute |
 
 The installers open these automatically. `bifrost doctor` prints the exact commands if you need them by hand.
 
@@ -193,6 +222,7 @@ Run several nodes on one machine with `--port-offset 10`; discovery deliberately
 | [**HOW-TO.md**](docs/HOW-TO.md) | Step-by-step guide, start to finish |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it works inside |
 | [PROTOCOL.md](docs/PROTOCOL.md) | The wire protocol, v2 |
+| [**COMPUTE.md**](docs/COMPUTE.md) | Sharing GPUs, models and tasks across the network |
 | [MOBILE.md](docs/MOBILE.md) | Building the Android and iOS clients |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | When peers do not appear |
 
@@ -211,7 +241,12 @@ What that does **not** mean is that it is careless with the boundaries it does h
 - framed reads are bounded, so a hostile length word cannot force a large allocation
 - beacons carry TTL 1 and never leave the local segment
 
-It has no encryption and no authentication. Do not run it on a network where that matters.
+Shared compute is the exception, and is closed by default: a peer must be
+approved with a pairing code before it can run anything, and it can only ever
+name a model or a task the owner declared — never a command. See
+[docs/COMPUTE.md § The security model](docs/COMPUTE.md#7-the-security-model).
+
+It has no encryption. Do not run it on a network where that matters.
 
 ---
 

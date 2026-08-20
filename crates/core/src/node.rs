@@ -242,6 +242,23 @@ impl Node {
         // Restore aliases and history before anything can observe the node, so
         // the first frame the dashboard draws is already correct.
         registry.apply_saved_aliases(&config.aliases).await;
+        compute
+            .trust
+            .load(
+                config
+                    .compute_tokens
+                    .iter()
+                    .map(|(node_id, token)| crate::compute::TrustedPeer {
+                        node_id: node_id.clone(),
+                        display_name: node_id.clone(),
+                        token: token.clone(),
+                        paired_at: Utc::now(),
+                        last_used: None,
+                        jobs_run: 0,
+                    })
+                    .collect(),
+            )
+            .await;
         match store.load_recent_chat(HISTORY_ON_START).await {
             Ok(history) => {
                 for message in history {
@@ -399,6 +416,13 @@ impl Node {
                     }
                 }
             });
+        }
+
+        // Drain the orchestrator's queue.
+        {
+            let scheduler = node.clone();
+            let shutdown = shutdown_tx.subscribe();
+            tokio::spawn(scheduler.run_scheduler(shutdown));
         }
 
         // Persist chat as it arrives, and keep presence fresh.
@@ -847,6 +871,180 @@ impl Node {
         match crate::chat::commands::parse(line) {
             Some(command) => self.execute(command).await.map(Some),
             None => Ok(None),
+        }
+    }
+
+    // ── Shared compute ───────────────────────────────────────────────────────
+
+    /// Queue work for the network. The orchestrator decides where it runs.
+    pub async fn submit_work(
+        &self,
+        work: crate::compute::Work,
+        priority: crate::compute::Priority,
+    ) -> Result<String> {
+        self.orchestrator.submit(work, priority).await
+    }
+
+    /// Remember a token earned by pairing, so it survives a restart.
+    pub async fn remember_pairing(&self, peer_id: &str, token: &str) -> Result<()> {
+        self.mutate_config(|config| {
+            config
+                .compute_tokens
+                .insert(peer_id.to_string(), token.to_string());
+        })
+        .await
+    }
+
+    /// The token this node holds for a peer, if it has paired with one.
+    pub async fn pairing_token(&self, peer_id: &str) -> Option<String> {
+        self.config
+            .read()
+            .await
+            .compute_tokens
+            .get(peer_id)
+            .cloned()
+    }
+
+    /// Persist a change to the compute switches.
+    pub async fn persist_compute_settings(
+        &self,
+        sharing: Option<bool>,
+        orchestrating: Option<bool>,
+    ) -> Result<()> {
+        self.mutate_config(|config| {
+            if let Some(enabled) = sharing {
+                config.compute_enabled = enabled;
+            }
+            if let Some(enabled) = orchestrating {
+                config.orchestrator_enabled = enabled;
+            }
+        })
+        .await
+    }
+
+    /// Drain the orchestrator's queue, dispatching each job to its chosen node.
+    ///
+    /// Runs as a background task for the life of the node. Each job is
+    /// dispatched on its own task so a long render does not hold up an
+    /// interactive prompt queued behind it.
+    async fn run_scheduler(self, mut shutdown: broadcast::Receiver<()>) {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(500));
+
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    while let Some((job, placement)) = self.orchestrator.next_ready().await {
+                        let node = self.clone();
+                        tokio::spawn(async move {
+                            node.dispatch_job(job, placement).await;
+                        });
+                    }
+                }
+                _ = shutdown.recv() => return,
+            }
+        }
+    }
+
+    /// Send one job to its chosen worker and stream the result back.
+    async fn dispatch_job(
+        &self,
+        job: crate::compute::ScheduledJob,
+        placement: crate::compute::orchestrator::Placement,
+    ) {
+        use crate::compute::protocol::{ComputeRequest, InferRequest, TaskRequest};
+        use crate::compute::Work;
+
+        let identity = self.identity();
+        let token = self.pairing_token(&placement.node_id).await;
+
+        // Work placed on this machine goes straight to its own service rather
+        // than out and back through the network stack.
+        let addr = if placement.node_id == identity.node_id {
+            Some(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                self.ports.compute,
+            ))
+        } else {
+            match self.registry.get(&placement.node_id).await {
+                Some(peer) => peer.compute_addr(),
+                None => None,
+            }
+        };
+
+        let Some(addr) = addr else {
+            self.orchestrator.requeue(&job.id, &placement.node_id).await;
+            return;
+        };
+
+        let request = match &job.work {
+            Work::Inference {
+                model,
+                prompt,
+                system,
+                temperature,
+            } => ComputeRequest::Infer(InferRequest {
+                requester: identity.node_id.clone(),
+                token,
+                model: model.clone(),
+                prompt: prompt.clone(),
+                system: system.clone(),
+                temperature: *temperature,
+                max_tokens: None,
+            }),
+            Work::Task {
+                name, parameters, ..
+            } => ComputeRequest::RunTask(TaskRequest {
+                requester: identity.node_id.clone(),
+                token,
+                task: name.clone(),
+                parameters: parameters.clone(),
+            }),
+        };
+
+        // Output is appended as it streams, so the dashboard shows an answer
+        // being written rather than appearing all at once.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+        let collector = {
+            let orchestrator = self.orchestrator.clone();
+            let job_id = job.id.clone();
+            tokio::spawn(async move {
+                while let Some(text) = rx.recv().await {
+                    orchestrator.append_output(&job_id, &text).await;
+                }
+            })
+        };
+
+        let outcome = self.compute.dispatch(addr, request, tx).await;
+        let _ = collector.await;
+
+        match outcome {
+            Ok(result) if result.success => {
+                self.orchestrator.finish(&job.id, None).await;
+                self.events.publish(NodeEvent::success(format!(
+                    "\"{}\" finished on {}",
+                    job.work.label(),
+                    placement.display_name
+                )));
+            }
+            Ok(result) => {
+                let error = result.error.unwrap_or_else(|| "the job failed".into());
+                self.orchestrator.finish(&job.id, Some(error.clone())).await;
+                self.events.publish(NodeEvent::error(format!(
+                    "\"{}\" failed on {}: {error}",
+                    job.work.label(),
+                    placement.display_name
+                )));
+            }
+            Err(e) => {
+                // A worker that refused or vanished is not a failed job: put it
+                // back so another device can pick it up.
+                tracing::warn!(
+                    worker = %placement.display_name,
+                    error = %format!("{e:#}"),
+                    "dispatch failed, trying elsewhere"
+                );
+                self.orchestrator.requeue(&job.id, &placement.node_id).await;
+            }
         }
     }
 

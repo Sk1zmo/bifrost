@@ -40,6 +40,7 @@ Look for **AP isolation**, **client isolation**, **station isolation** or **gues
 sudo ufw allow 9001/udp && sudo ufw allow 9005/udp
 sudo ufw allow 9000/tcp && sudo ufw allow 9002/tcp
 sudo ufw allow 9003/tcp && sudo ufw allow 9004/tcp
+sudo ufw allow 9006/tcp
 
 # Linux, firewalld
 sudo firewall-cmd --permanent \
@@ -52,7 +53,7 @@ sudo firewall-cmd --reload
 ```powershell
 # Windows, as Administrator
 netsh advfirewall firewall add rule name="Bifrost UDP" dir=in action=allow protocol=UDP localport=9001,9005
-netsh advfirewall firewall add rule name="Bifrost TCP" dir=in action=allow protocol=TCP localport=9000,9002,9003,9004
+netsh advfirewall firewall add rule name="Bifrost TCP" dir=in action=allow protocol=TCP localport=9000,9002,9003,9004,9006
 ```
 
 On macOS, System Settings → Network → Firewall → Options → allow incoming connections for `bifrost`.
@@ -284,6 +285,21 @@ xcode-select --install
 `network_mode: host` is required. Docker's default bridge network puts the container on its own subnet, where no broadcast reaches your real LAN.
 
 Host networking is limited on Docker Desktop for macOS and Windows — run Bifrost natively there. The container is intended for Linux servers.
+
+---
+
+## Shared compute
+
+Covered in depth in [COMPUTE.md § 9](COMPUTE.md#9-when-it-does-not-work). The
+three most common:
+
+- **"No device on this network can run that"** — the machine offering it does
+  not have `compute_enabled: true`, or the name does not match. `GET
+  /api/compute` lists what the network actually has.
+- **"This device has not been paired"** — expected until you enter the code.
+- **Models missing** — Bifrost looks for Ollama on `127.0.0.1:11434`, on the
+  machine that will run them. Installing Ollama on the asking machine does
+  nothing for the network.
 
 ---
 

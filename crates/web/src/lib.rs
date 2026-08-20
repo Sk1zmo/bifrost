@@ -24,6 +24,7 @@
 //! localhost.
 
 pub mod companion;
+pub mod compute_api;
 
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
@@ -135,6 +136,7 @@ pub fn router_with_state(state: AppState) -> Router {
         // Companion devices: a phone claiming its own place on the network.
         .route("/api/companion", get(list_companions).post(claim_companion))
         .route("/api/companion/leave", post(release_companion))
+        .merge(compute_api::routes())
         .with_state(state)
 }
 
@@ -183,25 +185,25 @@ pub async fn serve(
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
 /// An API error, rendered as JSON so the browser can show it verbatim.
-struct ApiError {
-    status: StatusCode,
-    message: String,
+pub struct ApiError {
+    pub status: StatusCode,
+    pub message: String,
 }
 
 impl ApiError {
-    fn bad_request(message: impl Into<String>) -> Self {
+    pub fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
         }
     }
-    fn not_found(message: impl Into<String>) -> Self {
+    pub fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
         }
     }
-    fn internal(message: impl Into<String>) -> Self {
+    pub fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
@@ -219,7 +221,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-type ApiResult<T> = std::result::Result<T, ApiError>;
+pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
 // ─── Pages ───────────────────────────────────────────────────────────────────
 
